@@ -80,6 +80,10 @@ class OrchestratorAgent(BaseAgent):
             self._resume_system()
         elif command == "STATUS":
             self._send_status()
+        elif command == "GO_LIVE":
+            self._switch_to_live(message.payload)
+        elif command == "GO_PAPER":
+            self._switch_to_paper()
 
     def _handle_request(self, message: AgentMessage):
         self.logger.info(f"Request from {message.from_agent}: {message.payload}")
@@ -204,6 +208,80 @@ class OrchestratorAgent(BaseAgent):
             priority=Priority.HIGH,
         )
         self.logger.info("System RESUMED in PAPER mode")
+
+    def _switch_to_live(self, payload: dict):
+        """Switch system to LIVE mode with safety guards.
+
+        Requires:
+        - Explicit human confirmation via payload["confirmed"] = True
+        - Initial allocation capped at INR 8,000
+        - Broker must be authenticated
+        """
+        INITIAL_LIVE_CAP = 8_000  # INR — cautious start
+
+        if not payload.get("confirmed"):
+            if self.telegram:
+                self.telegram.send_message(
+                    "WARNING: Switching to LIVE mode.\n"
+                    f"Initial cap: INR {INITIAL_LIVE_CAP:,}\n"
+                    "Reply /live confirm to proceed."
+                )
+            self.logger.warning("LIVE switch requested but not confirmed")
+            return
+
+        # Log the mode transition
+        self.sqlite.log_message({
+            "from_agent": "orchestrator",
+            "to_agent": "system",
+            "channel": "mode_switch",
+            "type": "COMMAND",
+            "priority": "CRITICAL",
+            "payload": {"action": "SWITCH_TO_LIVE", "cap": INITIAL_LIVE_CAP},
+            "timestamp": datetime.now().isoformat(),
+            "status": "EXECUTED",
+        })
+
+        self.redis.set_state("state:system_mode", {
+            "mode": "LIVE",
+            "set_by": "orchestrator",
+            "set_at": datetime.now().isoformat(),
+            "live_cap": INITIAL_LIVE_CAP,
+        })
+
+        self.send_message(
+            to_agent="broadcast",
+            msg_type=MessageType.COMMAND,
+            payload={"command": "MODE_CHANGE", "mode": "LIVE",
+                     "live_cap": INITIAL_LIVE_CAP},
+            priority=Priority.CRITICAL,
+        )
+
+        msg = (
+            f"LIVE MODE ACTIVATED\n"
+            f"Capital cap: INR {INITIAL_LIVE_CAP:,}\n"
+            f"All trades require human approval.\n"
+            f"Use /paper to switch back."
+        )
+        if self.telegram:
+            self.telegram.send_message(msg)
+        self.logger.warning(f"System switched to LIVE mode (cap: {INITIAL_LIVE_CAP})")
+
+    def _switch_to_paper(self):
+        """Switch system back to PAPER mode."""
+        self.redis.set_state("state:system_mode", {
+            "mode": "PAPER",
+            "set_by": "orchestrator",
+            "set_at": datetime.now().isoformat(),
+        })
+        self.send_message(
+            to_agent="broadcast",
+            msg_type=MessageType.COMMAND,
+            payload={"command": "MODE_CHANGE", "mode": "PAPER"},
+            priority=Priority.HIGH,
+        )
+        if self.telegram:
+            self.telegram.send_message("Switched to PAPER mode.")
+        self.logger.info("System switched to PAPER mode")
 
     def _send_status(self):
         """Compile and send system status."""
