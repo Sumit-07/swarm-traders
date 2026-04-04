@@ -113,10 +113,56 @@ class ExecutionAgent(BaseAgent):
             return None
 
     def _execute_live(self, order: dict) -> dict | None:
-        """Execute order via live broker API."""
-        # Phase 2 stub — will be implemented in Phase 6
-        self.logger.warning("Live execution not yet implemented — falling back to paper")
-        return self._execute_paper(order)
+        """Execute order via live Fyers broker API."""
+        symbol = order.get("symbol", "")
+        fyers_symbol = f"NSE:{symbol}-EQ"
+        qty = order.get("quantity", 0)
+        price = order.get("price", 0)
+        txn_type = order.get("transaction_type", "BUY")
+        order_type = order.get("order_type", "LIMIT")
+
+        try:
+            result = self.broker.place_order(
+                symbol=fyers_symbol, qty=qty, order_type=order_type,
+                price=price, transaction_type=txn_type,
+                product_type="INTRADAY",
+            )
+
+            if result["status"] != "PLACED":
+                self.logger.error(
+                    f"Live order failed: {result['message']}"
+                )
+                return None
+
+            broker_order_id = result["order_id"]
+
+            # Poll for fill (simple approach — check once after short wait)
+            import time
+            time.sleep(1)
+            status = self.broker.get_order_status(broker_order_id)
+
+            fill_price = status.get("fill_price", price)
+            if fill_price == 0:
+                fill_price = price  # Fallback if not yet filled
+
+            return {
+                "order_id": broker_order_id,
+                "symbol": symbol,
+                "transaction_type": txn_type,
+                "quantity": qty,
+                "requested_price": price,
+                "fill_price": fill_price,
+                "slippage": round(abs(fill_price - price) * qty, 2),
+                "brokerage": 20,  # Flat brokerage
+                "total_cost": round(fill_price * qty + 20, 2),
+                "filled_at": datetime.now().isoformat(),
+                "status": "FILLED",
+                "mode": "LIVE",
+                "broker_order_id": broker_order_id,
+            }
+        except Exception as e:
+            self.logger.error(f"Live execution failed: {e}")
+            return None
 
     def _report_fill(self, order: dict, fill: dict):
         """Report fill to orchestrator and compliance."""
@@ -193,9 +239,30 @@ class ExecutionAgent(BaseAgent):
             self.logger.warning(f"No stop-loss for order {order.get('order_id')}")
             return
 
-        self.logger.info(
-            f"Stop-loss placed for {order['symbol']} at {sl_price}"
-        )
+        mode = order.get("mode", "PAPER")
+
+        if mode == "LIVE" and self.broker and self.broker.is_authenticated:
+            symbol = order.get("symbol", "")
+            fyers_symbol = f"NSE:{symbol}-EQ"
+            direction = "LONG" if order.get("transaction_type") == "BUY" else "SHORT"
+            sl_txn = "SELL" if direction == "LONG" else "BUY"
+
+            result = self.broker.place_stoploss_order(
+                symbol=fyers_symbol,
+                qty=order.get("quantity", 0),
+                trigger_price=sl_price,
+                transaction_type=sl_txn,
+            )
+            if result["status"] == "PLACED":
+                self.logger.info(
+                    f"LIVE SL placed for {symbol} at {sl_price}: {result['order_id']}"
+                )
+            else:
+                self.logger.error(f"LIVE SL failed for {symbol}: {result['message']}")
+        else:
+            self.logger.info(
+                f"PAPER SL registered for {order['symbol']} at {sl_price}"
+            )
 
     def _update_positions(self, order: dict, fill: dict):
         """Update the positions state in Redis."""

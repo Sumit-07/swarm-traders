@@ -32,3 +32,6 @@ Thumbs.db
 
 # Redis dump
 dump.rdb
+
+# Private user manual
+UserManual.md

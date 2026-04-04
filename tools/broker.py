@@ -1,8 +1,11 @@
 """Fyers API wrapper for broker operations.
 
-Phase 1: Only authentication and data methods implemented.
-Order methods are stubs for Phase 5+.
+Handles authentication, market data, and order placement via Fyers v3 API.
+All order methods log extensively for audit trail.
 """
+
+import os
+from datetime import datetime
 
 import pandas as pd
 from tools.logger import get_agent_logger
@@ -128,24 +131,255 @@ class FyersBroker:
             return df
         raise ValueError(f"Failed to get history: {response}")
 
-    # --- Order Methods (stubs for Phase 5+) ---
+    # --- Order Methods ---
 
     def place_order(self, symbol: str, qty: int, order_type: str,
-                    price: float, transaction_type: str) -> dict:
-        raise NotImplementedError("Order placement not yet implemented")
+                    price: float, transaction_type: str,
+                    product_type: str = "INTRADAY") -> dict:
+        """Place an order via Fyers API.
+
+        Args:
+            symbol: Fyers format, e.g. "NSE:RELIANCE-EQ"
+            qty: Number of shares
+            order_type: "LIMIT" (1) or "MARKET" (2)
+            price: Limit price (ignored for MARKET)
+            transaction_type: "BUY" (1) or "SELL" (-1)
+            product_type: "INTRADAY" or "CNC" (delivery)
+
+        Returns: {order_id, status, message}
+        """
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        type_map = {"LIMIT": 1, "MARKET": 2, "SL": 3, "SL-M": 4}
+        side_map = {"BUY": 1, "SELL": -1}
+        product_map = {"INTRADAY": "INTRADAY", "CNC": "CNC", "MARGIN": "MARGIN"}
+
+        order_data = {
+            "symbol": symbol,
+            "qty": qty,
+            "type": type_map.get(order_type, 1),
+            "side": side_map.get(transaction_type, 1),
+            "productType": product_map.get(product_type, "INTRADAY"),
+            "limitPrice": price if order_type == "LIMIT" else 0,
+            "stopPrice": 0,
+            "validity": "DAY",
+            "disclosedQty": 0,
+            "offlineOrder": False,
+        }
+
+        logger.bind(log_type="trade").info(
+            f"LIVE ORDER: {transaction_type} {symbol} {qty}x "
+            f"@ {price} ({order_type}, {product_type})"
+        )
+
+        try:
+            response = self.fyers.place_order(data=order_data)
+            if response.get("s") == "ok":
+                order_id = response.get("id", "")
+                logger.bind(log_type="trade").info(
+                    f"ORDER PLACED: {order_id}"
+                )
+                return {
+                    "order_id": order_id,
+                    "status": "PLACED",
+                    "message": response.get("message", ""),
+                }
+            logger.error(f"Order placement failed: {response}")
+            return {
+                "order_id": "",
+                "status": "FAILED",
+                "message": response.get("message", str(response)),
+            }
+        except Exception as e:
+            logger.error(f"Order placement exception: {e}")
+            return {"order_id": "", "status": "ERROR", "message": str(e)}
 
     def place_stoploss_order(self, symbol: str, qty: int,
-                             trigger_price: float) -> dict:
-        raise NotImplementedError("Stop-loss order not yet implemented")
+                             trigger_price: float,
+                             transaction_type: str = "SELL",
+                             product_type: str = "INTRADAY") -> dict:
+        """Place a stop-loss market order.
 
-    def get_order_status(self, order_id: str) -> dict:
-        raise NotImplementedError("Order status not yet implemented")
+        Args:
+            symbol: Fyers format
+            qty: Shares
+            trigger_price: Stop trigger price
+            transaction_type: "BUY" or "SELL"
+            product_type: "INTRADAY" or "CNC"
+
+        Returns: {order_id, status, message}
+        """
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        side_map = {"BUY": 1, "SELL": -1}
+
+        order_data = {
+            "symbol": symbol,
+            "qty": qty,
+            "type": 4,  # SL-M (stop-loss market)
+            "side": side_map.get(transaction_type, -1),
+            "productType": product_type,
+            "limitPrice": 0,
+            "stopPrice": trigger_price,
+            "validity": "DAY",
+            "disclosedQty": 0,
+            "offlineOrder": False,
+        }
+
+        logger.bind(log_type="trade").info(
+            f"LIVE SL ORDER: {transaction_type} {symbol} {qty}x "
+            f"trigger @ {trigger_price}"
+        )
+
+        try:
+            response = self.fyers.place_order(data=order_data)
+            if response.get("s") == "ok":
+                order_id = response.get("id", "")
+                logger.info(f"SL ORDER PLACED: {order_id}")
+                return {
+                    "order_id": order_id,
+                    "status": "PLACED",
+                    "message": response.get("message", ""),
+                }
+            logger.error(f"SL order failed: {response}")
+            return {"order_id": "", "status": "FAILED",
+                    "message": response.get("message", str(response))}
+        except Exception as e:
+            logger.error(f"SL order exception: {e}")
+            return {"order_id": "", "status": "ERROR", "message": str(e)}
+
+    def modify_order(self, order_id: str, qty: int = None,
+                     price: float = None, trigger_price: float = None) -> dict:
+        """Modify an existing order."""
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        data = {"id": order_id}
+        if qty is not None:
+            data["qty"] = qty
+        if price is not None:
+            data["limitPrice"] = price
+        if trigger_price is not None:
+            data["stopPrice"] = trigger_price
+
+        try:
+            response = self.fyers.modify_order(data=data)
+            logger.info(f"Order modified {order_id}: {response}")
+            return {
+                "order_id": order_id,
+                "status": "MODIFIED" if response.get("s") == "ok" else "FAILED",
+                "message": response.get("message", ""),
+            }
+        except Exception as e:
+            logger.error(f"Modify order exception: {e}")
+            return {"order_id": order_id, "status": "ERROR", "message": str(e)}
 
     def cancel_order(self, order_id: str) -> dict:
-        raise NotImplementedError("Order cancel not yet implemented")
+        """Cancel an open order."""
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        try:
+            response = self.fyers.cancel_order(data={"id": order_id})
+            logger.info(f"Order cancelled {order_id}: {response}")
+            return {
+                "order_id": order_id,
+                "status": "CANCELLED" if response.get("s") == "ok" else "FAILED",
+                "message": response.get("message", ""),
+            }
+        except Exception as e:
+            logger.error(f"Cancel order exception: {e}")
+            return {"order_id": order_id, "status": "ERROR", "message": str(e)}
+
+    def get_order_status(self, order_id: str) -> dict:
+        """Get status of a specific order."""
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        try:
+            response = self.fyers.orderbook()
+            if response.get("s") == "ok":
+                for order in response.get("orderBook", []):
+                    if order.get("id") == order_id:
+                        return {
+                            "order_id": order_id,
+                            "status": order.get("status"),
+                            "filled_qty": order.get("filledQty", 0),
+                            "fill_price": order.get("tradedPrice", 0),
+                            "message": order.get("message", ""),
+                        }
+            return {"order_id": order_id, "status": "NOT_FOUND"}
+        except Exception as e:
+            logger.error(f"Get order status exception: {e}")
+            return {"order_id": order_id, "status": "ERROR", "message": str(e)}
 
     def get_positions(self) -> list[dict]:
-        raise NotImplementedError("Positions not yet implemented")
+        """Get all open positions from broker."""
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        try:
+            response = self.fyers.positions()
+            if response.get("s") == "ok":
+                positions = []
+                for p in response.get("netPositions", []):
+                    if p.get("netQty", 0) != 0:
+                        positions.append({
+                            "symbol": p.get("symbol", ""),
+                            "quantity": abs(p.get("netQty", 0)),
+                            "direction": "LONG" if p.get("netQty", 0) > 0 else "SHORT",
+                            "avg_price": p.get("avgPrice", 0),
+                            "ltp": p.get("ltp", 0),
+                            "pnl": p.get("pl", 0),
+                            "product_type": p.get("productType", ""),
+                        })
+                return positions
+            logger.error(f"Get positions failed: {response}")
+            return []
+        except Exception as e:
+            logger.error(f"Get positions exception: {e}")
+            return []
 
     def get_funds(self) -> dict:
-        raise NotImplementedError("Funds not yet implemented")
+        """Get available funds/margin."""
+        if not self.is_authenticated:
+            raise RuntimeError("Broker not authenticated")
+
+        try:
+            response = self.fyers.funds()
+            if response.get("s") == "ok":
+                funds = response.get("fund_limit", [])
+                result = {}
+                for f in funds:
+                    title = f.get("title", "")
+                    if title == "Total Balance":
+                        result["total_balance"] = f.get("equityAmount", 0)
+                    elif title == "Available Balance":
+                        result["available_balance"] = f.get("equityAmount", 0)
+                    elif title == "Used Margin":
+                        result["used_margin"] = f.get("equityAmount", 0)
+                return result
+            logger.error(f"Get funds failed: {response}")
+            return {}
+        except Exception as e:
+            logger.error(f"Get funds exception: {e}")
+            return {}
+
+    def exit_position(self, symbol: str, qty: int, direction: str,
+                      product_type: str = "INTRADAY") -> dict:
+        """Exit an open position by placing an opposite order.
+
+        Args:
+            symbol: Fyers format
+            qty: Shares to exit
+            direction: Current direction ("LONG" or "SHORT")
+            product_type: "INTRADAY" or "CNC"
+        """
+        txn_type = "SELL" if direction == "LONG" else "BUY"
+        return self.place_order(
+            symbol=symbol, qty=qty, order_type="MARKET",
+            price=0, transaction_type=txn_type,
+            product_type=product_type,
+        )

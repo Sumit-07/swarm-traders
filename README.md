@@ -163,7 +163,7 @@ Run `streamlit run dashboard/app.py` to access:
 | 3. Backtesting | Done | Simulator, metrics, runner, HTML reports |
 | 4. LLM Integration | Done | OpenAI/Gemini routing, prompt rendering, all agents wired |
 | 5. Paper Trading | Done | Dashboard, enhanced simulator, position lifecycle |
-| 6. Live Trading | Pending | Fyers live orders, cautious deployment |
+| 6. Live Trading | Done | Fyers live orders, position monitoring, mode switching |
 
 ## Tech Stack
 

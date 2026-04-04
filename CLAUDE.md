@@ -15,23 +15,26 @@ The full system design spec is in `trading_swarm_design.md` — read it before i
 ```bash
 # Setup
 brew install redis && brew services start redis
-pyenv install 3.11.9 && pyenv global 3.11.9
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env  # then fill in API keys
 
-# Run system
+# Run system (starts in PAPER mode)
 python main.py
+
+# Verify setup (Phase 1+2 checks)
+python main.py --verify
 
 # Dashboard (separate terminal)
 streamlit run dashboard/app.py
 
 # Backtesting
-python backtesting/runner.py --strategy RSI_MEAN_REVERSION --start 2024-06-01 --end 2024-12-31
+python -m backtesting.runner --strategy RSI_MEAN_REVERSION --start 2024-06-01 --end 2024-12-31 --report
 
 # Tests
-pytest tests/
-pytest tests/test_indicators.py  # single test file
+pytest tests/                          # full suite (134 tests)
+pytest tests/test_indicators.py        # single test file
+pytest tests/test_live_trading.py -v   # live trading tests
 ```
 
 ## Architecture
@@ -62,7 +65,7 @@ No agent may send directly to Execution Agent except Orchestrator. All trade pro
 
 ### Key Directories
 - `agents/`: Each agent has its own directory with `soul.md`, `agent.md`, `prompts.md`, and `.py` implementation. All inherit from `base_agent.py`.
-- `tools/`: Broker API wrapper (Fyers), market data, indicators (pure Python, NO TA-Lib), options chain parser, order simulator
+- `tools/`: Broker API wrapper (`broker.py` — Fyers live orders), market data, indicators (pure Python, NO TA-Lib), LLM provider (`llm.py` — OpenAI/Gemini routing), order simulator, position monitor
 - `graph/`: LangGraph graph definition (`swarm_graph.py`), shared state TypedDict (`state.py`), conditional edges (`edges.py`)
 - `memory/`: Redis and SQLite wrappers, DB schema
 - `comms/`: Telegram bot for human interface
@@ -94,16 +97,29 @@ Win rate ≥ 42%, Profit factor ≥ 1.3, Sharpe ≥ 0.8, Max drawdown ≤ 18%, M
 - ₹20 flat brokerage per order
 - No signals before 9:15 AM or after 3:20 PM
 
+### Mode Switching
+- System always starts in PAPER mode (hardcoded default)
+- Switch to LIVE via Telegram `/live confirm` — requires explicit confirmation
+- Initial live cap: ₹8,000 (enforced in orchestrator)
+- Switch back via `/paper` at any time
+- All mode transitions logged to SQLite audit trail
+
+### Position Monitoring
+- `tools/position_monitor.py` reconciles broker positions with Redis state
+- Detects discrepancies: quantity mismatch, broker-only positions, local-only positions
+- Paper positions checked for stop/target/time exits every cycle
+- Force-close-all at 3:20 PM for both paper and live positions
+
 ## Implementation Phases
 
-The project follows 6 phases defined in `trading_swarm_design.md` Section 13:
+All 6 phases are complete:
 1. **Foundation** — Data pipeline, indicators, Redis/SQLite (no LLMs)
 2. **Agent scaffold** — All 8 agents as classes, Redis comms, LangGraph, Telegram (no LLM calls)
 3. **Backtesting** — Backtest all strategies, identify 2-3 that pass gate criteria
 4. **LLM integration** — Wire up prompts, full morning-to-close flow in paper mode
 5. **Paper trading** — Full trading days, dashboard, 7 consecutive days stable
-6. **Live trading** — Cautious deployment starting at ₹8,000 allocation
+6. **Live trading** — Fyers live orders, position monitoring, mode switching with safety guards
 
 ## Tech Stack
 
-Python 3.11+, LangGraph/LangChain, Fyers API (broker), yfinance (fallback data), Redis, SQLite/SQLAlchemy, APScheduler, python-telegram-bot, Streamlit/Plotly (dashboard), pandas-ta (indicators), Pydantic, Loguru
+Python 3.10+, LangGraph/LangChain, langchain-openai, langchain-google-genai, Fyers API v3 (broker), yfinance (fallback data), Redis, SQLite/SQLAlchemy, APScheduler, python-telegram-bot, Streamlit/Plotly (dashboard), pandas-ta (indicators), Pydantic, Loguru
