@@ -162,6 +162,13 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 FYERS_CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "")
 FYERS_SECRET_KEY = os.getenv("FYERS_SECRET_KEY", "")
 FYERS_REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI", "http://localhost:8080")
+
+if not FYERS_CLIENT_ID or not FYERS_SECRET_KEY:
+    import warnings
+    warnings.warn(
+        "FYERS_CLIENT_ID or FYERS_SECRET_KEY not set. "
+        "Broker features disabled — paper mode with yfinance only."
+    )
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")

@@ -14,9 +14,10 @@ from config import CAPITAL, RISK_LIMITS, TRADING_MODE
 
 
 class OrchestratorAgent(BaseAgent):
-    def __init__(self, redis_store, sqlite_store, telegram_bot=None):
+    def __init__(self, redis_store, sqlite_store, telegram_bot=None, broker=None):
         super().__init__("orchestrator", redis_store, sqlite_store)
         self.telegram = telegram_bot
+        self.broker = broker
         self._pending_proposals: dict = {}  # proposal_id -> proposal data
         self._human_approval_pending: dict = {}
 
@@ -28,6 +29,27 @@ class OrchestratorAgent(BaseAgent):
             "set_at": datetime.now().isoformat(),
         })
         self.logger.info(f"System mode set to {TRADING_MODE}")
+
+        # Authenticate with Fyers (required for all modes including PAPER)
+        if self.broker and self.telegram:
+            try:
+                from tools.broker import load_or_refresh_token
+                access_token = load_or_refresh_token(self.telegram)
+                self.broker.authenticate_with_token(access_token)
+                self.logger.info("Fyers client initialised successfully")
+            except TimeoutError:
+                self.logger.error("Fyers auth timed out — system halted")
+                self._halt_system("Fyers authentication timed out")
+            except Exception as e:
+                self.logger.warning(
+                    f"Fyers auth failed: {e} — continuing without broker"
+                )
+                if self.telegram:
+                    self.telegram.send_message(
+                        f"Fyers auth failed: {e}\n"
+                        "System running without broker (paper mode only).\n"
+                        "Send /authenticate to retry."
+                    )
 
     def on_stop(self):
         pass
@@ -80,10 +102,35 @@ class OrchestratorAgent(BaseAgent):
             self._resume_system()
         elif command == "STATUS":
             self._send_status()
+        elif command == "AUTHENTICATE":
+            self._handle_authenticate()
         elif command == "GO_LIVE":
             self._switch_to_live(message.payload)
         elif command == "GO_PAPER":
             self._switch_to_paper()
+
+    def _handle_authenticate(self):
+        """Force re-authentication with Fyers."""
+        if not self.broker or not self.telegram:
+            if self.telegram:
+                self.telegram.send_message(
+                    "Broker not configured. Check FYERS_CLIENT_ID in .env."
+                )
+            return
+        try:
+            from tools.broker import force_reauthenticate
+            access_token = force_reauthenticate(self.telegram)
+            self.broker.authenticate_with_token(access_token)
+            self.logger.info("Fyers re-authenticated successfully")
+        except TimeoutError:
+            if self.telegram:
+                self.telegram.send_message(
+                    "Re-authentication timed out. Send /authenticate to try again."
+                )
+        except Exception as e:
+            self.logger.error(f"Re-authentication failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"Re-authentication failed: {e}")
 
     def _handle_request(self, message: AgentMessage):
         self.logger.info(f"Request from {message.from_agent}: {message.payload}")

@@ -1,16 +1,228 @@
 """Fyers API wrapper for broker operations.
 
-Handles authentication, market data, and order placement via Fyers v3 API.
+Handles authentication (OAuth2 with callback server), market data,
+and order placement via Fyers v3 API.
 All order methods log extensively for audit trail.
 """
 
+import json
 import os
+import threading
+import time
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 from tools.logger import get_agent_logger
 
+from config import FYERS_CLIENT_ID, FYERS_SECRET_KEY, FYERS_REDIRECT_URI
+
 logger = get_agent_logger("broker")
+
+# --- OAuth2 Authentication Module ---
+
+TOKEN_FILE = Path("data/fyers_token.json")
+AUTH_TIMEOUT_SECONDS = 300  # 5 minutes
+CALLBACK_PORT = 8080
+
+
+class _FyersCallbackHandler(BaseHTTPRequestHandler):
+    """Minimal HTTP server that catches the Fyers OAuth2 redirect.
+
+    Listens on CALLBACK_PORT for a single GET request containing
+    the auth_code query parameter.
+    """
+    auth_code: str | None = None
+    received: bool = False
+
+    def do_GET(self):
+        params = parse_qs(urlparse(self.path).query)
+
+        if "auth_code" in params:
+            _FyersCallbackHandler.auth_code = params["auth_code"][0]
+            _FyersCallbackHandler.received = True
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body style='font-family:sans-serif;padding:40px'>"
+                b"<h2>Authentication successful.</h2>"
+                b"<p>You can close this tab and return to the app.</p>"
+                b"</body></html>"
+            )
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # Suppress HTTP server console output
+
+
+def _run_auth_flow(telegram) -> str:
+    """Run the full OAuth2 flow.
+
+    1. Generates Fyers auth URL
+    2. Sends it to Telegram as a button
+    3. Starts callback server on CALLBACK_PORT
+    4. Waits for auth code (timeout: AUTH_TIMEOUT_SECONDS)
+    5. Exchanges auth code for access token
+    6. Saves token to TOKEN_FILE
+    7. Returns access token string
+
+    Raises:
+        TimeoutError: if user does not complete auth within timeout
+        ValueError: if Fyers token exchange fails
+    """
+    from fyers_apiv3 import fyersModel
+
+    # Reset handler state
+    _FyersCallbackHandler.auth_code = None
+    _FyersCallbackHandler.received = False
+
+    # Build Fyers auth URL
+    session = fyersModel.SessionModel(
+        client_id=FYERS_CLIENT_ID,
+        secret_key=FYERS_SECRET_KEY,
+        redirect_uri=FYERS_REDIRECT_URI,
+        response_type="code",
+        grant_type="authorization_code",
+    )
+    auth_url = session.generate_authcode()
+
+    # Send Telegram message with inline button
+    telegram.send_auth_request(
+        message=(
+            "Fyers authentication required to start the trading system.\n"
+            "Tap the button below, log in to Fyers, and approve access.\n"
+            f"Timeout in {AUTH_TIMEOUT_SECONDS // 60} minutes."
+        ),
+        url=auth_url,
+        button_text="Authorise Fyers →",
+    )
+
+    # Start callback HTTP server in a background thread
+    server = HTTPServer(("0.0.0.0", CALLBACK_PORT), _FyersCallbackHandler)
+
+    def _serve():
+        while not _FyersCallbackHandler.received:
+            server.handle_request()
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+
+    # Poll for auth code with timeout
+    elapsed = 0
+    while not _FyersCallbackHandler.received and elapsed < AUTH_TIMEOUT_SECONDS:
+        time.sleep(1)
+        elapsed += 1
+
+    server.server_close()
+
+    if not _FyersCallbackHandler.auth_code:
+        telegram.send_message(
+            "Fyers authentication timed out after "
+            f"{AUTH_TIMEOUT_SECONDS // 60} minutes. "
+            "System will not start. Send /authenticate to retry."
+        )
+        raise TimeoutError(
+            f"Fyers auth not completed within {AUTH_TIMEOUT_SECONDS} seconds."
+        )
+
+    # Exchange auth code for access token
+    session.set_token(_FyersCallbackHandler.auth_code)
+    token_response = session.generate_token()
+
+    if "access_token" not in token_response:
+        error = token_response.get("message", "Unknown error")
+        telegram.send_message(
+            f"Fyers token exchange failed: {error}. Send /authenticate to retry."
+        )
+        raise ValueError(f"Fyers token exchange failed: {token_response}")
+
+    access_token = token_response["access_token"]
+
+    # Persist token to disk
+    TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+    token_data = {
+        "access_token": access_token,
+        "generated_at": datetime.now().isoformat(),
+        "generated_date": datetime.now().strftime("%Y-%m-%d"),
+    }
+    with open(TOKEN_FILE, "w") as f:
+        json.dump(token_data, f, indent=2)
+
+    telegram.send_message(
+        "Fyers authenticated successfully. "
+        "Token saved. System starting market data feeds..."
+    )
+
+    return access_token
+
+
+def load_or_refresh_token(telegram) -> str:
+    """Main entry point called by Orchestrator at startup (6:55 AM).
+
+    Logic:
+    - If a token file exists AND was generated today -> reuse it
+    - Otherwise -> run full auth flow
+
+    This ensures that a container restart mid-day does not require
+    re-authentication.
+
+    Args:
+        telegram: TelegramBot instance for sending notifications
+
+    Returns:
+        Valid Fyers access token string
+    """
+    if TOKEN_FILE.exists():
+        try:
+            with open(TOKEN_FILE) as f:
+                token_data = json.load(f)
+
+            generated_date = token_data.get("generated_date", "")
+            today = datetime.now().strftime("%Y-%m-%d")
+
+            if generated_date == today:
+                access_token = token_data["access_token"]
+                telegram.send_message(
+                    "Fyers token found from earlier today. "
+                    "Reusing — no re-authentication needed."
+                )
+                return access_token
+
+        except (json.JSONDecodeError, KeyError):
+            TOKEN_FILE.unlink(missing_ok=True)
+
+    return _run_auth_flow(telegram)
+
+
+def get_fyers_client(access_token: str):
+    """Returns an initialised FyersModel client ready for API calls.
+
+    Call this after load_or_refresh_token().
+    """
+    from fyers_apiv3 import fyersModel
+
+    return fyersModel.FyersModel(
+        client_id=FYERS_CLIENT_ID,
+        token=access_token,
+        log_path="logs/",
+        is_async=False,
+    )
+
+
+def force_reauthenticate(telegram) -> str:
+    """Called when user sends /authenticate via Telegram.
+
+    Deletes existing token and runs full auth flow.
+    """
+    TOKEN_FILE.unlink(missing_ok=True)
+    telegram.send_message("Existing token cleared. Starting fresh authentication...")
+    return _run_auth_flow(telegram)
 
 
 class FyersBroker:
