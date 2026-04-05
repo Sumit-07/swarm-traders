@@ -67,6 +67,19 @@ class SwarmScheduler:
         # Also run at 15:00 (last signal check)
         self._add_job("signal_loop_final", self._run_signal_loop, "15:00")
 
+        # 09:15–15:20 — Position monitor every 5 minutes
+        self.scheduler.add_job(
+            self._run_position_monitor,
+            CronTrigger(
+                minute="*/5",
+                hour="9-15",
+                day_of_week="mon-fri",
+                timezone=IST,
+            ),
+            id="position_monitor",
+            replace_existing=True,
+        )
+
         # 15:20 — Force close intraday positions
         self._add_job("force_close", self._run_force_close, "15:20")
 
@@ -203,6 +216,18 @@ class SwarmScheduler:
                 logger.info(f"Signal loop: {len(signals)} signals detected")
         except Exception as e:
             logger.error(f"Signal loop failed: {e}")
+
+    def _run_position_monitor(self):
+        """Every 5 min during market hours — check open positions for threshold breaches."""
+        monitor = self.agents.get("position_monitor")
+        if not monitor:
+            return
+        try:
+            alerts = monitor.monitor_positions()
+            if alerts:
+                logger.info(f"Position monitor: {alerts} alert(s) sent")
+        except Exception as e:
+            logger.error(f"Position monitor failed: {e}")
 
     def _run_force_close(self):
         """15:20 — Force close all intraday positions."""

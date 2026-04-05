@@ -1,10 +1,10 @@
 # Swarm Traders
 
-Multi-agent AI trading system for Indian markets (NSE/BSE). Nine coordinated AI agents manage two capital buckets — conservative (swing/intraday) and risk (event-driven options) — with strict risk management, human-in-the-loop approval, and full audit trails.
+Multi-agent AI trading system for Indian markets (NSE/BSE). Ten coordinated AI agents manage two capital buckets — conservative (swing/intraday) and risk (event-driven options) — with strict risk management, human-in-the-loop approval, and full audit trails.
 
 ## How It Works
 
-Every morning, the **Strategist** picks a trading strategy based on market regime (VIX, trend, FII flows). The **Analyst** scans a watchlist for entry signals using technical indicators. The **Risk Agent** reviews every proposal through 5 checks (position size, daily loss budget, max positions, cooldown, stop-loss logic). Only the **Orchestrator** can forward approved orders to the **Execution Agent**. The **Compliance Agent** audits everything at end of day. After market close, the **Optimizer** runs a structured meeting to extract learnings that improve next-day decisions.
+Every morning, the **Strategist** picks a trading strategy based on market regime (VIX, trend, FII flows). The **Analyst** scans a watchlist for entry signals using technical indicators. The **Risk Agent** reviews every proposal through 5 checks (position size, daily loss budget, max positions, cooldown, stop-loss logic). Only the **Orchestrator** can forward approved orders to the **Execution Agent**. The **Compliance Agent** audits everything at end of day. During market hours, the **Position Monitor** watches all open positions every 5 minutes against strategy-aware thresholds and escalates to the Orchestrator for a 3-step LLM review (Analyst thesis check → Risk Agent recommendation → final decision). After market close, the **Optimizer** runs a structured meeting to extract learnings that improve next-day decisions.
 
 ## Agent Roster
 
@@ -19,12 +19,13 @@ Every morning, the **Strategist** picks a trading strategy based on market regim
 | Execution Agent | GPT-4o mini | Order placement (Kite Connect live, simulator for paper) |
 | Compliance Agent | Gemini Flash | SEBI rules, audit trail, EOD reports |
 | Optimizer | GPT-4o | Post-market learning — 3-round meeting, knowledge graph |
+| Position Monitor | None | Pure Python position watchdog — threshold alerts to Orchestrator |
 
 ## Agent Hierarchy & Communication
 
 ```
                               ┌─────────────┐
-                              │  👤 Human   │
+                              │  Human      │
                               │  (Telegram)  │
                               └──────┬───────┘
                                      │ commands / approvals
@@ -42,13 +43,13 @@ Every morning, the **Strategist** picks a trading strategy based on market regim
   │   AGENT   │ │           │ │            │ │     AGENT      │ │   AGENT   │
   └─────┬─────┘ └───────────┘ └─────┬──────┘ └────────┬───────┘ └───────────┘
         │                           │                  │
-        │        ┌───────────┐      │         ┌───────────┐
-        └───────▶│   RISK    │◀─────┘         │ OPTIMIZER │
-                 │STRATEGIST │                │ (post-mkt) │
-                 └───────────┘                └───────────┘
-                        ▲
-                        │
-                 ┌───────────┐
+        │        ┌───────────┐      │         ┌───────────┐  ┌───────────────┐
+        └───────▶│   RISK    │◀─────┘         │ OPTIMIZER │  │   POSITION    │
+                 │STRATEGIST │                │ (post-mkt) │  │   MONITOR    │
+                 └───────────┘                └───────────┘  │ (pure Python) │
+                        ▲                                    └───────────────┘
+                        │                                      alerts ▲ to
+                 ┌───────────┐                                 Orchestrator
                  │   RISK    │
                  │   AGENT   │
                  └───────────┘
@@ -69,8 +70,9 @@ All messaging goes through Redis pub/sub with strict routing validation. An agen
 | **Execution Agent** | Orchestrator, Compliance Agent |
 | **Compliance Agent** | Orchestrator |
 | **Optimizer** | Orchestrator |
+| **Position Monitor** | Orchestrator |
 
-**Key constraint:** Only the Orchestrator can message the Execution Agent. No agent can place trades directly.
+**Key constraints:** Only the Orchestrator can message the Execution Agent. No agent can place trades directly. The Position Monitor makes zero LLM calls — it only detects threshold breaches and escalates to Orchestrator.
 
 ### Daily Schedule (IST)
 
@@ -82,6 +84,9 @@ All messaging goes through Redis pub/sub with strict routing validation. An agen
 09:15  ── Market opens ──────────────────────────────────────────
 09:15  Signal loop begins (every 5 minutes)
        Data Agent → Analyst → Risk Agent → Orchestrator → Execution
+09:15  Position Monitor begins (every 5 minutes until 15:20)
+       Checks open positions against strategy-aware thresholds
+       Alerts → Orchestrator 3-step review (Analyst + Risk + Decision)
 15:00  Last signal check
 15:20  Force close all intraday positions
 15:30  ── Market closes ─────────────────────────────────────────
@@ -154,7 +159,7 @@ python -m backtesting.runner --strategy RSI_MEAN_REVERSION \
 ### Tests
 
 ```bash
-pytest tests/                          # full suite (163 tests)
+pytest tests/                          # full suite (179 tests)
 pytest tests/test_indicators.py        # single file
 pytest tests/test_optimizer.py -v      # optimizer/knowledge graph tests
 ```
@@ -163,7 +168,7 @@ pytest tests/test_optimizer.py -v      # optimizer/knowledge graph tests
 
 ```
 swarm-traders/
-├── agents/                  # 9 AI agents, each with soul.md, prompts.md, implementation
+├── agents/                  # 10 AI agents, each with soul.md, prompts.md, implementation
 │   ├── base_agent.py        # Abstract base class (lifecycle, messaging, LLM calls)
 │   ├── orchestrator/        # Master coordinator
 │   ├── strategist/          # Conservative strategy selection
@@ -173,7 +178,8 @@ swarm-traders/
 │   ├── risk_agent/          # Trade proposal review (last gatekeeper)
 │   ├── execution_agent/     # Order placement
 │   ├── compliance_agent/    # Audit and rule enforcement
-│   └── optimizer/           # Post-market learning (3-round meeting)
+│   ├── optimizer/           # Post-market learning (3-round meeting)
+│   └── position_monitor/    # Pure Python position watchdog (zero LLM calls)
 ├── backtesting/             # Backtest framework
 │   ├── data_loader.py       # Historical data (yfinance with caching)
 │   ├── simulator.py         # Order fill simulation (anti-look-ahead-bias)
@@ -195,7 +201,7 @@ swarm-traders/
 │   ├── redis_store.py       # Redis wrapper (pub/sub, shared state, market data)
 │   ├── sqlite_store.py      # SQLite wrapper (trades, signals, audit trail)
 │   ├── knowledge_graph.py   # Optimizer learnings (write, load, reinforce, archive)
-│   └── schema.sql           # 9 tables with indexes
+│   └── schema.sql           # 11 tables with indexes
 ├── scheduler/               # Daily schedule
 │   └── job_scheduler.py     # APScheduler IST schedule (06:55-17:15)
 ├── tools/                   # Shared utilities
@@ -206,7 +212,7 @@ swarm-traders/
 │   └── order_simulator.py   # Paper trading engine
 ├── config.py                # Central config (risk limits, strategies, schedules)
 ├── main.py                  # Entry point
-└── tests/                   # 163 tests
+└── tests/                   # 179 tests
 ```
 
 ## Risk Management
@@ -225,7 +231,7 @@ All risk rules are hardcoded in `config.py` and cannot be overridden by any agen
 
 - **Redis pub/sub** — Real-time agent-to-agent messaging with strict routing validation (only Orchestrator can message Execution Agent)
 - **Redis hash** — Shared mutable state (positions, system mode, market data with 120s TTL)
-- **SQLite** — Persistent audit trail (9 tables: trades, signals, daily_pnl, agent_messages, orchestrator_log, compliance_audit, data_log, learnings, optimizer_meetings)
+- **SQLite** — Persistent audit trail (11 tables: trades, signals, daily_pnl, agent_messages, orchestrator_log, compliance_audit, data_log, learnings, optimizer_meetings, monitor_alerts, monitor_ticks)
 - **LangGraph** — 5 scheduled sub-graphs: morning strategy, intraday signal loop (every 5 min), force close, EOD review, optimizer meeting
 
 ## Dashboard
@@ -233,7 +239,7 @@ All risk rules are hardcoded in `config.py` and cannot be overridden by any agen
 Run `streamlit run dashboard/app.py` to access:
 
 1. **Positions** — Live open positions, capital utilization, market overview
-2. **Agent Status** — Heartbeat health, state, LLM call count for all 9 agents
+2. **Agent Status** — Heartbeat health, state, LLM call count for all 10 agents
 3. **P&L** — Daily/cumulative P&L charts, drawdown visualization
 4. **Trade Log** — Searchable table with date/status filters
 5. **Backtest Results** — HTML report viewer, strategy comparison table
@@ -243,7 +249,7 @@ Run `streamlit run dashboard/app.py` to access:
 | Phase | Status | Description |
 |---|---|---|
 | 1. Foundation | Done | Config, logging, Redis/SQLite, market data, indicators |
-| 2. Agent Scaffold | Done | 9 agents, Redis comms, LangGraph, Telegram, scheduler |
+| 2. Agent Scaffold | Done | 10 agents, Redis comms, LangGraph, Telegram, scheduler |
 | 3. Backtesting | Done | Simulator, metrics, runner, HTML reports |
 | 4. LLM Integration | Done | OpenAI/Gemini routing, prompt rendering, all agents wired |
 | 5. Paper Trading | Done | Dashboard, enhanced simulator, position lifecycle |

@@ -54,7 +54,7 @@ def create_stores():
 
 
 def create_agents(redis_store, sqlite_store):
-    """Create all 9 agent instances."""
+    """Create all 10 agent instances."""
     from tools.broker import KiteBroker
     from tools.market_data import MarketDataProvider
     from agents.orchestrator.orchestrator import OrchestratorAgent
@@ -66,6 +66,7 @@ def create_agents(redis_store, sqlite_store):
     from agents.execution_agent.execution_agent import ExecutionAgent
     from agents.compliance_agent.compliance_agent import ComplianceAgent
     from agents.optimizer.optimizer import OptimizerAgent
+    from agents.position_monitor.position_monitor import PositionMonitorAgent
     from comms.telegram_bot import TelegramBot
 
     # Telegram bot
@@ -98,6 +99,7 @@ def create_agents(redis_store, sqlite_store):
         ),
         "compliance_agent": ComplianceAgent(redis_store, sqlite_store),
         "optimizer": OptimizerAgent(redis_store, sqlite_store),
+        "position_monitor": PositionMonitorAgent(redis_store, sqlite_store),
     }
 
     return agents, telegram

@@ -71,6 +71,7 @@ class OrchestratorAgent(BaseAgent):
             MessageType.COMMAND: self._handle_command,
             MessageType.REQUEST: self._handle_request,
             MessageType.SYNTHESIS: self._handle_synthesis,
+            MessageType.POSITION_ALERT: self._handle_position_alert,
         }
         handler = handlers.get(message.type, self._handle_unknown)
         handler(message)
@@ -443,6 +444,250 @@ class OrchestratorAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"EOD summary LLM call failed: {e}")
             return ""
+
+    # ── Position Monitor Review Flow ──────────────────────────────────────
+
+    def _handle_position_alert(self, message: AgentMessage):
+        """Full review flow triggered by Position Monitor alert.
+
+        3-step LLM review: Analyst thesis check → Risk Agent recommendation
+        → Orchestrator decision. Always sends Telegram.
+        """
+        import json
+
+        alert = message.payload
+        position = alert.get("position", {})
+        symbol = position.get("symbol", "unknown")
+        self.logger.info(
+            "Position alert for %s — trigger: %s",
+            symbol, alert.get("trigger_type"),
+        )
+
+        # Build shared context for prompts
+        context = self._build_review_context(alert)
+
+        try:
+            # Step 1 — Analyst thesis check
+            analyst_response = self.call_llm(
+                "PROMPT_ANALYST_POSITION_REVIEW", context,
+            )
+        except Exception as e:
+            self.logger.error("Analyst position review failed: %s", e)
+            analyst_response = {
+                "thesis_holds": False, "confidence": "LOW",
+                "key_reason": "LLM unavailable",
+                "analyst_recommendation": "EXIT",
+                "indicator_status": "UNKNOWN",
+                "market_alignment": "UNKNOWN",
+            }
+
+        try:
+            # Step 2 — Risk Agent review
+            risk_context = {
+                **context,
+                "thesis_holds": analyst_response.get("thesis_holds", False),
+                "analyst_confidence": analyst_response.get("confidence", "LOW"),
+                "indicator_status": analyst_response.get("indicator_status", "UNKNOWN"),
+                "analyst_recommendation": analyst_response.get("analyst_recommendation", "EXIT"),
+            }
+            risk_response = self.call_llm(
+                "PROMPT_RISK_POSITION_REVIEW", risk_context,
+            )
+        except Exception as e:
+            self.logger.error("Risk position review failed: %s", e)
+            risk_response = {
+                "action": "HOLD", "reason": "LLM unavailable",
+                "urgency": "MONITOR", "flag_human": True,
+                "flag_reason": "Review LLM failed",
+            }
+
+        try:
+            # Step 3 — Orchestrator final decision
+            decision_context = {
+                **context,
+                "thesis_holds": analyst_response.get("thesis_holds", False),
+                "analyst_confidence": analyst_response.get("confidence", "LOW"),
+                "analyst_key_reason": analyst_response.get("key_reason", "N/A"),
+                "analyst_recommendation": analyst_response.get("analyst_recommendation", "EXIT"),
+                "risk_action": risk_response.get("action", "HOLD"),
+                "risk_reason": risk_response.get("reason", "N/A"),
+                "risk_urgency": risk_response.get("urgency", "MONITOR"),
+                "flag_human": risk_response.get("flag_human", True),
+            }
+            raw_decision = self.call_llm(
+                "PROMPT_ORCHESTRATOR_POSITION_DECISION",
+                decision_context,
+                expect_json=False,
+            )
+
+            # Parse JSON + Telegram (same pattern as optimizer synthesis)
+            final = {}
+            telegram_text = ""
+            if "---" in raw_decision:
+                json_part, telegram_part = raw_decision.split("---", 1)
+                json_str = json_part.strip()
+                if json_str.startswith("```"):
+                    json_str = json_str.split("\n", 1)[1] if "\n" in json_str else json_str[3:]
+                if json_str.endswith("```"):
+                    json_str = json_str[:-3]
+                try:
+                    final = json.loads(json_str.strip())
+                except json.JSONDecodeError:
+                    final = {}
+                telegram_text = telegram_part.strip()
+            else:
+                try:
+                    final = json.loads(raw_decision.strip())
+                except json.JSONDecodeError:
+                    final = {"final_action": "HOLD"}
+
+        except Exception as e:
+            self.logger.error("Orchestrator position decision failed: %s", e)
+            final = {"final_action": "HOLD", "execute_immediately": False}
+            telegram_text = ""
+
+        # Step 4 — Execute if needed
+        if final.get("execute_immediately") and final.get("order_details"):
+            self._execute_position_action(final["order_details"], position)
+
+        # Step 5 — Telegram (ALWAYS)
+        if not telegram_text:
+            entry_price = position.get("entry_price", 0)
+            current_price = position.get("current_price", 0)
+            pnl = current_price - entry_price if position.get("direction") == "LONG" \
+                else entry_price - current_price
+            telegram_text = (
+                f"POSITION ALERT — {symbol}\n\n"
+                f"Trigger: {alert.get('trigger_description', alert.get('trigger_type', '?'))}\n"
+                f"P&L: {pnl:+.1f} per share\n\n"
+                f"Decision: {final.get('final_action', 'HOLD')}\n"
+                f"Reason: {final.get('reason', 'Review complete.')}"
+            )
+        if self.telegram:
+            self.telegram.send_message(telegram_text)
+        self.logger.info("Position review complete for %s: %s",
+                         symbol, final.get("final_action", "HOLD"))
+
+    def _build_review_context(self, alert: dict) -> dict:
+        """Build template variables for position review prompts."""
+        position = alert.get("position", {})
+        market = alert.get("market_context", {})
+
+        entry_price = position.get("entry_price", 0)
+        current_price = position.get("current_price", 0)
+        stop_price = position.get("stop_loss_price", 0)
+        target_price = position.get("target_price", 0)
+        direction = position.get("direction", "LONG")
+        quantity = position.get("quantity", 0)
+
+        if direction == "LONG":
+            pnl_per_share = current_price - entry_price
+            dist_to_stop = ((current_price - stop_price) / entry_price * 100) if stop_price else 0
+            dist_to_target = ((target_price - current_price) / entry_price * 100) if target_price else 0
+        else:
+            pnl_per_share = entry_price - current_price
+            dist_to_stop = ((stop_price - current_price) / entry_price * 100) if stop_price else 0
+            dist_to_target = ((current_price - target_price) / entry_price * 100) if target_price else 0
+
+        pnl_pct = (pnl_per_share / entry_price * 100) if entry_price else 0
+
+        # Portfolio context
+        positions_data = self.redis.get_state("state:positions") or {}
+        all_positions = positions_data.get("positions", [])
+        open_positions = [p for p in all_positions if p.get("status") == "OPEN"]
+
+        # Tick data for indicators
+        tick = self.redis.get_market_data(
+            f"data:watchlist_ticks:{position.get('symbol', '')}",
+        ) or {}
+
+        return {
+            # System prompt vars
+            "system_mode": self._get_system_mode(),
+            "current_time": datetime.now(IST).strftime("%H:%M IST"),
+            "open_positions_count": len(open_positions),
+            "conservative_strategy": "active",
+            "risk_strategy": "active",
+            # Position vars
+            "symbol": position.get("symbol", ""),
+            "direction": direction,
+            "strategy_name": position.get("strategy_name", ""),
+            "entry_price": f"{entry_price:.2f}" if entry_price else "N/A",
+            "entry_time": position.get("entry_time", "N/A"),
+            "current_price": f"{current_price:.2f}" if current_price else "N/A",
+            "current_pnl": f"{pnl_per_share * quantity:.0f}",
+            "pnl_pct": f"{pnl_pct:.2f}",
+            "distance_to_stop_pct": f"{dist_to_stop:.1f}",
+            "distance_to_target_pct": f"{dist_to_target:.1f}",
+            "minutes_in_trade": position.get("minutes_in_trade", 0),
+            "position_size": f"{entry_price * quantity:.0f}" if entry_price else "0",
+            "bucket": position.get("bucket", "conservative"),
+            # Alert vars
+            "trigger_type": alert.get("trigger_type", ""),
+            "trigger_value": alert.get("trigger_value", 0),
+            "threshold_description": alert.get("trigger_description", ""),
+            "trigger_description": alert.get("trigger_description", ""),
+            # Market vars
+            "nifty_direction": "up" if market.get("nifty_change", 0) > 0 else "down",
+            "nifty_move_30m": f"{market.get('nifty_change', 0):.2f}",
+            "vix": market.get("vix", "N/A"),
+            "volume_ratio": market.get("volume_ratio", 1.0),
+            "rsi": tick.get("rsi", "N/A"),
+            "vwap_deviation": tick.get("vwap_dev", "N/A"),
+            # Original entry context
+            "original_analyst_note": position.get("original_analyst_note", "N/A"),
+            "original_entry_conditions": position.get("original_entry_conditions", "N/A"),
+            # Portfolio context
+            "todays_pnl": f"{self._get_todays_pnl():.0f}",
+            "loss_budget_remaining": f"{CAPITAL['conservative_bucket'] * RISK_LIMITS['max_daily_loss_pct'] - abs(min(self._get_todays_pnl(), 0)):.0f}",
+            "other_positions_count": max(0, len(open_positions) - 1),
+            "consecutive_losses": 0,
+            "strategy_type": alert.get("strategy_type", "intraday"),
+            "time_to_forced_close": "N/A",
+        }
+
+    def _execute_position_action(self, order_details: dict, position: dict):
+        """Send position action to Execution Agent."""
+        action_type = order_details.get("type", "")
+        symbol = order_details.get("symbol") or position.get("symbol", "")
+
+        if action_type in ("TRAIL", "TRAIL_STOP"):
+            payload = {
+                "command": "MODIFY_STOP",
+                "trade_id": position.get("trade_id", ""),
+                "symbol": symbol,
+                "new_stop_price": order_details.get("new_stop_price", 0),
+                "quantity": position.get("quantity", 0),
+            }
+        elif action_type == "PARTIAL":
+            payload = {
+                "command": "PARTIAL_CLOSE",
+                "trade_id": position.get("trade_id", ""),
+                "symbol": symbol,
+                "quantity": order_details.get("quantity", 0),
+                "order_type": "MARKET",
+                "reason": "Position Monitor — partial exit",
+            }
+        elif action_type == "FULL":
+            payload = {
+                "command": "FULL_CLOSE",
+                "trade_id": position.get("trade_id", ""),
+                "symbol": symbol,
+                "quantity": position.get("quantity", 0),
+                "order_type": "MARKET",
+                "reason": "Position Monitor — full exit",
+            }
+        else:
+            self.logger.warning("Unknown position action type: %s", action_type)
+            return
+
+        self.send_message(
+            to_agent="execution_agent",
+            msg_type=MessageType.COMMAND,
+            payload=payload,
+            priority=Priority.HIGH,
+        )
+        self.logger.info("Position action sent: %s for %s", action_type, symbol)
 
     def run(self, state: dict) -> dict:
         """LangGraph node: orchestrator coordination."""

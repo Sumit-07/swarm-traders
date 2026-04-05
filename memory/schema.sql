@@ -161,3 +161,26 @@ CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_from ON agent_messages(from_agent);
 CREATE INDEX IF NOT EXISTS idx_messages_to ON agent_messages(to_agent);
 CREATE INDEX IF NOT EXISTS idx_data_log_created ON data_log(created_at);
+
+-- Position Monitor tables
+CREATE TABLE IF NOT EXISTS monitor_alerts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    trade_id            TEXT    NOT NULL,
+    symbol              TEXT    NOT NULL,
+    strategy_name       TEXT    NOT NULL,
+    trigger_type        TEXT    NOT NULL,
+    trigger_value       REAL    NOT NULL,
+    trigger_description TEXT    NOT NULL,
+    orchestrator_action TEXT,
+    alerted_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS monitor_ticks (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    checked_at          TIMESTAMP NOT NULL,
+    positions_checked   INTEGER NOT NULL,
+    alerts_sent         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_alerts_trade
+    ON monitor_alerts(trade_id, alerted_at DESC);
