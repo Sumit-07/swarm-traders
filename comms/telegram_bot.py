@@ -59,6 +59,7 @@ class TelegramBot:
                 "report": self._cmd_report,
                 "agents": self._cmd_agents,
                 "authenticate": self._cmd_authenticate,
+                "optimizer": self._cmd_optimizer,
             }
             for cmd_name, handler in commands.items():
                 self._app.add_handler(CommandHandler(cmd_name, handler))
@@ -269,6 +270,12 @@ class TelegramBot:
         self._publish_command("AUTHENTICATE")
         await update.message.reply_text(
             "Re-authentication requested. Check for auth button shortly."
+        )
+
+    async def _cmd_optimizer(self, update, context):
+        self._publish_command("OPTIMIZER")
+        await update.message.reply_text(
+            "Optimizer meeting requested. Guards will be checked."
         )
 
     async def _handle_text(self, update, context):

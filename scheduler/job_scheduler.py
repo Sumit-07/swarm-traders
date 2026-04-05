@@ -76,6 +76,17 @@ class SwarmScheduler:
         # 15:45 — Strategy review
         self._add_job("strategy_review", self._strategy_review, "15:45")
 
+        # 15:50 — Optimizer meeting (post-market learning)
+        self._add_job("optimizer_meeting", self._run_optimizer_meeting, "15:50")
+
+        # Weekly Sunday 6 PM — Archive stale learnings
+        self.scheduler.add_job(
+            self._archive_stale_learnings,
+            CronTrigger(hour=18, minute=0, day_of_week="sun", timezone=IST),
+            id="weekly_archive",
+            replace_existing=True,
+        )
+
         # 17:15 — System sleep
         self._add_job("system_sleep", self._system_sleep, "17:15")
 
@@ -235,6 +246,130 @@ class SwarmScheduler:
                     "from_agent": "scheduler",
                     "priority": "NORMAL",
                 })()
+            )
+
+    def _run_optimizer_meeting(self):
+        """15:50 — Run post-market Optimizer meeting."""
+        logger.info("Checking optimizer meeting guards...")
+
+        # Guard 1: minimum 2 trades today
+        orchestrator = self.agents.get("orchestrator")
+        if not orchestrator:
+            return
+
+        sqlite = orchestrator.sqlite
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+
+        trades_today = sqlite.query(
+            "SELECT COUNT(*) as cnt FROM trades "
+            "WHERE DATE(entry_time) = :today AND status = 'CLOSED'",
+            {"today": today},
+        )
+        trade_count = trades_today[0]["cnt"] if trades_today else 0
+
+        if trade_count < 2:
+            msg = (
+                f"No optimizer meeting today — only {trade_count} trade(s) "
+                f"completed (minimum 2 required)."
+            )
+            logger.info(msg)
+            if self.telegram:
+                self.telegram.send_message(msg)
+            return
+
+        # Guard 2: system not HALTED all day
+        mode_data = orchestrator.redis.get_state("state:system_mode") or {}
+        if mode_data.get("mode") == "HALTED":
+            msg = "No optimizer meeting today — system was in HALTED mode."
+            logger.info(msg)
+            if self.telegram:
+                self.telegram.send_message(msg)
+            return
+
+        # Guard 3: not already run today
+        existing = sqlite.query(
+            "SELECT id FROM optimizer_meetings WHERE meeting_date = :today",
+            {"today": today},
+        )
+        if existing:
+            msg = "No optimizer meeting today — already ran."
+            logger.info(msg)
+            if self.telegram:
+                self.telegram.send_message(msg)
+            return
+
+        # Build meeting state
+        logger.info("Starting optimizer meeting. Trades today: %d", trade_count)
+        trades = sqlite.get_trades(date=today)
+        signals = sqlite.query(
+            "SELECT * FROM signals WHERE DATE(created_at) = :today",
+            {"today": today},
+        )
+
+        # Get strategy info from Redis
+        strategy_data = orchestrator.redis.get_state("state:active_strategy") or {}
+        snapshot = orchestrator.redis.get_market_data("data:market_snapshot") or {}
+        nifty = snapshot.get("nifty", snapshot.get("NIFTY 50", {}))
+        vix_data = snapshot.get("indiavix", snapshot.get("INDIA VIX", {}))
+
+        # Calculate P&L
+        daily_pnl = sqlite.get_daily_pnl(today) or {}
+        conservative_pnl = daily_pnl.get("conservative_pnl", 0) or 0
+        risk_pnl = daily_pnl.get("risk_pnl", 0) or 0
+
+        initial_state = {
+            "date": today,
+            "trade_count": trade_count,
+            "conservative_pnl": conservative_pnl,
+            "risk_pnl": risk_pnl,
+            "regime": strategy_data.get("regime", "unknown"),
+            "vix": vix_data.get("ltp", 0) if isinstance(vix_data, dict) else 0,
+            "nifty_change_pct": nifty.get("change_pct", 0) if isinstance(nifty, dict) else 0,
+            "trades_data": trades,
+            "signals_data": signals,
+            "strategy_selected": strategy_data.get("strategy", "N/A"),
+            "morning_rationale": strategy_data.get("rationale", "N/A"),
+            "morning_confidence": strategy_data.get("confidence", "N/A"),
+            "risk_strategy": strategy_data.get("risk_strategy", "N/A"),
+            "instrument": strategy_data.get("instrument", "N/A"),
+        }
+
+        # Run meeting graph
+        meeting_graph = self.graphs.get("meeting")
+        if not meeting_graph:
+            logger.error("Meeting graph not built")
+            return
+
+        try:
+            meeting_graph.invoke(initial_state)
+            logger.info("Optimizer meeting completed successfully.")
+        except Exception as e:
+            logger.error("Optimizer meeting failed: %s", e)
+            # Notification guarantee: always send something to Telegram
+            if self.telegram:
+                self.telegram.send_message(
+                    f"OPTIMIZER REPORT — {today}\n"
+                    f"Meeting failed: {str(e)[:200]}\n"
+                    f"Conservative: {conservative_pnl:.0f} | "
+                    f"Risk: {risk_pnl:.0f}"
+                )
+
+    def _archive_stale_learnings(self):
+        """Sunday 6 PM — Archive stale learnings from knowledge graph."""
+        orchestrator = self.agents.get("orchestrator")
+        if not orchestrator:
+            return
+
+        from memory.knowledge_graph import archive_stale_learnings
+        count = archive_stale_learnings(orchestrator.sqlite)
+        if count > 0 and self.telegram:
+            active = orchestrator.sqlite.query(
+                "SELECT COUNT(*) as cnt FROM learnings WHERE archived = FALSE"
+            )
+            active_count = active[0]["cnt"] if active else 0
+            self.telegram.send_message(
+                f"Knowledge graph maintenance: {count} stale learnings archived. "
+                f"Active learnings: {active_count}"
             )
 
     def _system_sleep(self):

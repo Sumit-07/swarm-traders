@@ -376,6 +376,11 @@ class BaseAgent(ABC):
         system_template = self.prompts.get("SYSTEM_PROMPT", "")
         system_prompt = render_prompt(system_template, variables) if system_template else ""
 
+        # Inject learnings from knowledge graph (loaded on wake)
+        extra = getattr(self, "_extra_context", None)
+        if extra:
+            system_prompt += f"\n\n## Past Learnings (from optimizer meetings)\n{extra}"
+
         # Build user prompt
         user_template = self.prompts.get(prompt_name, "")
         if not user_template:

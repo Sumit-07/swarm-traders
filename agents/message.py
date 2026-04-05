@@ -23,6 +23,7 @@ class MessageType(str, Enum):
     ALERT = "ALERT"
     COMMAND = "COMMAND"
     HEARTBEAT = "HEARTBEAT"
+    SYNTHESIS = "SYNTHESIS"
 
 
 class Priority(str, Enum):

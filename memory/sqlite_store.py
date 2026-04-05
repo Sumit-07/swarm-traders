@@ -217,3 +217,22 @@ class SQLiteStore:
             result = conn.execute(text(sql), params or {})
             columns = result.keys()
             return [dict(zip(columns, row)) for row in result.fetchall()]
+
+    def execute(self, sql: str, params: list = None):
+        """Execute INSERT/UPDATE/DELETE with positional ? params.
+
+        Converts ? placeholders to :p0, :p1, ... for SQLAlchemy text().
+        Returns the result proxy (use .rowcount for affected rows).
+        """
+        named_params = {}
+        if params:
+            converted_sql = sql
+            for i, val in enumerate(params):
+                converted_sql = converted_sql.replace("?", f":p{i}", 1)
+                named_params[f"p{i}"] = val
+            sql = converted_sql
+
+        with self.engine.connect() as conn:
+            result = conn.execute(text(sql), named_params)
+            conn.commit()
+            return result

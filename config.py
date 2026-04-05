@@ -84,6 +84,7 @@ AGENT_IDS = [
     "risk_agent",
     "execution_agent",
     "compliance_agent",
+    "optimizer",
 ]
 
 # LLM model mapping per agent
@@ -96,6 +97,7 @@ AGENT_LLM_MODELS = {
     "risk_agent": "gpt-4o-mini",
     "execution_agent": "gpt-4o-mini",
     "compliance_agent": "gemini-flash",
+    "optimizer": "gpt-4o",
 }
 
 # --- Redis Channels ---
@@ -112,11 +114,13 @@ ALLOWED_COMMUNICATION_PATHS = {
     "orchestrator": [
         "data_agent", "strategist", "risk_strategist",
         "analyst", "risk_agent", "execution_agent", "compliance_agent",
+        "optimizer",
     ],
     "analyst": ["risk_agent", "orchestrator"],
     "risk_agent": ["orchestrator"],
     "execution_agent": ["orchestrator", "compliance_agent"],
     "compliance_agent": ["orchestrator"],
+    "optimizer": ["orchestrator"],
 }
 
 # --- Strategy Library ---
