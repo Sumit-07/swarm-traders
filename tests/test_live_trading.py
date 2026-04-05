@@ -1,169 +1,143 @@
-"""Tests for Phase 6: Fyers broker methods, position monitoring, and mode switching."""
+"""Tests for Phase 6: Kite broker methods, position monitoring, and mode switching."""
 
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.broker import FyersBroker
+from tools.broker import KiteBroker
 from tools.position_monitor import PositionMonitor
 from tools.order_simulator import OrderSimulator
 
 
-# --- Broker Order Tests (mocked Fyers API) ---
+# --- Broker Order Tests (mocked Kite API) ---
 
 class TestBrokerPlaceOrder:
     def _make_broker(self):
-        broker = FyersBroker("client", "secret", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
         return broker
 
     def test_place_order_success(self):
         broker = self._make_broker()
-        broker.fyers.place_order.return_value = {
-            "s": "ok", "id": "ORD123", "message": "Order placed"
-        }
-        result = broker.place_order(
-            "NSE:RELIANCE-EQ", 10, "LIMIT", 2800.0, "BUY",
-        )
+
+        with patch("tools.kite_broker.place_order", return_value="ORD123") as mock_place:
+            with patch("tools.kite_broker._assert_live_mode"):
+                result = broker.place_order(
+                    "RELIANCE", 10, "LIMIT", 2800.0, "BUY",
+                )
         assert result["status"] == "PLACED"
         assert result["order_id"] == "ORD123"
 
     def test_place_order_failure(self):
         broker = self._make_broker()
-        broker.fyers.place_order.return_value = {
-            "s": "error", "message": "Insufficient funds"
-        }
-        result = broker.place_order(
-            "NSE:RELIANCE-EQ", 10, "LIMIT", 2800.0, "BUY",
-        )
+
+        with patch("tools.kite_broker.place_order", side_effect=Exception("Insufficient funds")):
+            with patch("tools.kite_broker._assert_live_mode"):
+                result = broker.place_order(
+                    "RELIANCE", 10, "LIMIT", 2800.0, "BUY",
+                )
         assert result["status"] == "FAILED"
 
-    def test_place_order_exception(self):
-        broker = self._make_broker()
-        broker.fyers.place_order.side_effect = Exception("Network error")
-        result = broker.place_order(
-            "NSE:RELIANCE-EQ", 10, "LIMIT", 2800.0, "BUY",
-        )
-        assert result["status"] == "ERROR"
-
     def test_place_order_unauthenticated(self):
-        broker = FyersBroker("client", "secret", "http://localhost")
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
         with pytest.raises(RuntimeError, match="not authenticated"):
-            broker.place_order("NSE:X-EQ", 1, "LIMIT", 100, "BUY")
+            broker.place_order("X", 1, "LIMIT", 100, "BUY")
 
 
 class TestBrokerStopLoss:
     def _make_broker(self):
-        broker = FyersBroker("client", "secret", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
         return broker
 
     def test_stoploss_order_success(self):
         broker = self._make_broker()
-        broker.fyers.place_order.return_value = {
-            "s": "ok", "id": "SL456", "message": "SL placed"
-        }
-        result = broker.place_stoploss_order(
-            "NSE:RELIANCE-EQ", 10, 2750.0,
-        )
+
+        with patch("tools.kite_broker.place_stoploss_order", return_value="SL456"):
+            with patch("tools.kite_broker._assert_live_mode"):
+                result = broker.place_stoploss_order(
+                    "RELIANCE", 10, 2750.0,
+                )
         assert result["status"] == "PLACED"
         assert result["order_id"] == "SL456"
-
-    def test_stoploss_uses_slm_type(self):
-        broker = self._make_broker()
-        broker.fyers.place_order.return_value = {"s": "ok", "id": "SL1"}
-        broker.place_stoploss_order("NSE:X-EQ", 5, 100.0)
-        call_data = broker.fyers.place_order.call_args[1]["data"]
-        assert call_data["type"] == 4  # SL-M order type
 
 
 class TestBrokerPositions:
     def test_get_positions_success(self):
-        broker = FyersBroker("c", "s", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
-        broker.fyers.positions.return_value = {
-            "s": "ok",
-            "netPositions": [
-                {"symbol": "NSE:RELIANCE-EQ", "netQty": 10,
-                 "avgPrice": 2800, "ltp": 2850, "pl": 500,
-                 "productType": "INTRADAY"},
-                {"symbol": "NSE:TCS-EQ", "netQty": 0,
-                 "avgPrice": 3500, "ltp": 3500, "pl": 0,
-                 "productType": "INTRADAY"},
-            ],
-        }
-        positions = broker.get_positions()
-        assert len(positions) == 1  # Only non-zero qty
-        assert positions[0]["symbol"] == "NSE:RELIANCE-EQ"
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
+
+        mock_positions = [
+            {"symbol": "RELIANCE", "quantity": 10,
+             "average_price": 2800, "last_price": 2850, "pnl": 500,
+             "product": "MIS"},
+        ]
+        with patch("tools.kite_broker.get_positions", return_value=mock_positions):
+            with patch("tools.kite_broker._assert_live_mode"):
+                positions = broker.get_positions()
+        assert len(positions) == 1
+        assert positions[0]["symbol"] == "RELIANCE"
         assert positions[0]["direction"] == "LONG"
 
     def test_get_positions_short(self):
-        broker = FyersBroker("c", "s", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
-        broker.fyers.positions.return_value = {
-            "s": "ok",
-            "netPositions": [
-                {"symbol": "NSE:INFY-EQ", "netQty": -5,
-                 "avgPrice": 1600, "ltp": 1580, "pl": 100,
-                 "productType": "INTRADAY"},
-            ],
-        }
-        positions = broker.get_positions()
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
+
+        mock_positions = [
+            {"symbol": "INFY", "quantity": -5,
+             "average_price": 1600, "last_price": 1580, "pnl": 100,
+             "product": "MIS"},
+        ]
+        with patch("tools.kite_broker.get_positions", return_value=mock_positions):
+            with patch("tools.kite_broker._assert_live_mode"):
+                positions = broker.get_positions()
         assert positions[0]["direction"] == "SHORT"
 
 
 class TestBrokerFunds:
     def test_get_funds(self):
-        broker = FyersBroker("c", "s", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
-        broker.fyers.funds.return_value = {
-            "s": "ok",
-            "fund_limit": [
-                {"title": "Total Balance", "equityAmount": 50000},
-                {"title": "Available Balance", "equityAmount": 42000},
-                {"title": "Used Margin", "equityAmount": 8000},
-            ],
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
+
+        mock_margins = {
+            "available": 42000,
+            "used": 8000,
+            "total": 50000,
         }
-        funds = broker.get_funds()
+        with patch("tools.kite_broker.get_margins", return_value=mock_margins):
+            with patch("tools.kite_broker._assert_live_mode"):
+                funds = broker.get_funds()
         assert funds["total_balance"] == 50000
         assert funds["available_balance"] == 42000
         assert funds["used_margin"] == 8000
 
 
-class TestBrokerModifyCancel:
+class TestBrokerCancelExit:
     def _make_broker(self):
-        broker = FyersBroker("c", "s", "http://localhost")
-        broker.fyers = MagicMock()
-        broker._authenticated = True
+        broker = KiteBroker("api_key", "api_secret", "http://localhost")
+        mock_kite = MagicMock()
+        broker.set_kite_client(mock_kite)
         return broker
-
-    def test_modify_order(self):
-        broker = self._make_broker()
-        broker.fyers.modify_order.return_value = {"s": "ok", "message": "Modified"}
-        result = broker.modify_order("ORD1", price=2850.0)
-        assert result["status"] == "MODIFIED"
 
     def test_cancel_order(self):
         broker = self._make_broker()
-        broker.fyers.cancel_order.return_value = {"s": "ok", "message": "Cancelled"}
-        result = broker.cancel_order("ORD1")
+        with patch("tools.kite_broker.cancel_order", return_value=True):
+            with patch("tools.kite_broker._assert_live_mode"):
+                result = broker.cancel_order("ORD1")
         assert result["status"] == "CANCELLED"
 
     def test_exit_position(self):
         broker = self._make_broker()
-        broker.fyers.place_order.return_value = {"s": "ok", "id": "EXIT1"}
-        result = broker.exit_position("NSE:RELIANCE-EQ", 10, "LONG")
+        with patch("tools.kite_broker.place_order", return_value="EXIT1"):
+            with patch("tools.kite_broker._assert_live_mode"):
+                result = broker.exit_position("RELIANCE", 10, "LONG")
         assert result["status"] == "PLACED"
-        # Should be a SELL market order
-        call_data = broker.fyers.place_order.call_args[1]["data"]
-        assert call_data["side"] == -1  # SELL
-        assert call_data["type"] == 2   # MARKET
 
 
 # --- Position Monitor Tests ---

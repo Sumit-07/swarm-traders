@@ -159,16 +159,19 @@ SIMULATION = {
 # --- Environment Variables ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-FYERS_CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "")
-FYERS_SECRET_KEY = os.getenv("FYERS_SECRET_KEY", "")
-FYERS_REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI", "http://localhost:8080")
+KITE_API_KEY = os.getenv("KITE_API_KEY", "")
+KITE_API_SECRET = os.getenv("KITE_API_SECRET", "")
+KITE_REDIRECT_URI = os.getenv("KITE_REDIRECT_URI", "http://localhost:8080")
+AUTH_MODE = os.getenv("AUTH_MODE", "telegram")
+DATA_SOURCE = os.getenv("DATA_SOURCE", "kite")
 
-if not FYERS_CLIENT_ID or not FYERS_SECRET_KEY:
+if not KITE_API_KEY or not KITE_API_SECRET:
     import warnings
     warnings.warn(
-        "FYERS_CLIENT_ID or FYERS_SECRET_KEY not set. "
+        "KITE_API_KEY or KITE_API_SECRET not set. "
         "Broker features disabled — paper mode with yfinance only."
     )
+
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")

@@ -1,263 +1,185 @@
-"""Market data provider with Fyers primary and yfinance fallback.
+"""Unified data access layer.
 
-All symbols internally use clean format (e.g., "RELIANCE", "NIFTY").
-Conversion to broker-specific format happens inside this module only.
+Routes all data requests to the configured backend based on
+DATA_SOURCE environment variable.
+
+Agents and backtest code ALWAYS call this module, never the backend
+modules directly. This enables seamless switching between data sources.
+
+DATA_SOURCE options:
+  kite      — Kite Connect API (primary)
+  yfinance  — Yahoo Finance (free, 15-min delay, last resort)
 """
 
-import time
-from datetime import datetime, timedelta
+import os
 
 import pandas as pd
 
-from tools.broker import FyersBroker
 from tools.logger import get_agent_logger
 
 logger = get_agent_logger("market_data")
+DATA_SOURCE = os.getenv("DATA_SOURCE", "kite")
 
-# Symbol mappings
-YFINANCE_INDEX_MAP = {
-    "NIFTY": "^NSEI",
-    "BANKNIFTY": "^NSEBANK",
-    "INDIAVIX": "^INDIAVIX",
+# ── Shared state ──────────────────────────────────────────────────────────────
+# The Kite client is injected at startup by the Orchestrator.
+
+_kite_client = None
+
+
+def set_kite_client(kite):
+    """Called by Orchestrator after authentication to inject the Kite client."""
+    global _kite_client
+    _kite_client = kite
+    logger.info("Kite client injected into market_data module.")
+
+
+# ── Interval mapping ─────────────────────────────────────────────────────────
+
+INTERVAL_MAP = {
+    "1m": "minute",
+    "3m": "3minute",
+    "5m": "5minute",
+    "15m": "15minute",
+    "30m": "30minute",
+    "1h": "60minute",
+    "1d": "day",
+    # Also accept old-style Fyers intervals for backward compat
+    "1": "minute",
+    "5": "5minute",
+    "15": "15minute",
+    "60": "60minute",
+    "D": "day",
 }
 
-FYERS_INDEX_MAP = {
-    "NIFTY": "NSE:NIFTY50-INDEX",
-    "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
-    "INDIAVIX": "NSE:INDIAVIX-INDEX",
+# yfinance interval mapping
+YF_INTERVAL_MAP = {
+    "1m": "1m",
+    "5m": "5m",
+    "15m": "15m",
+    "1h": "1h",
+    "1d": "1d",
+    "1": "1m",
+    "5": "5m",
+    "15": "15m",
+    "60": "1h",
+    "D": "1d",
 }
 
-# Rate limiting
-_last_call_time = 0.0
-_MIN_CALL_INTERVAL = 0.34  # ~3 calls/sec
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def get_ohlcv(symbol: str, interval: str = "5m", days: int = 60) -> pd.DataFrame:
+    """Fetch historical OHLCV data for a symbol.
+
+    Returns canonical DataFrame: timestamp, open, high, low, close, volume, symbol
+    """
+    if DATA_SOURCE == "kite" and _kite_client:
+        from tools.kite_market_data import get_ohlcv as kite_ohlcv
+        kite_interval = INTERVAL_MAP.get(interval, interval)
+        return kite_ohlcv(_kite_client, symbol, kite_interval, days)
+
+    # Fallback: yfinance
+    from tools.yfinance_fallback import get_ohlcv as yf_ohlcv
+    yf_interval = YF_INTERVAL_MAP.get(interval, interval)
+    return yf_ohlcv(symbol, yf_interval, days)
 
 
-def _rate_limit():
-    global _last_call_time
-    elapsed = time.time() - _last_call_time
-    if elapsed < _MIN_CALL_INTERVAL:
-        time.sleep(_MIN_CALL_INTERVAL - elapsed)
-    _last_call_time = time.time()
+def get_live_quote(symbols: list[str]) -> dict:
+    """Fetch live quotes for a list of symbols.
+
+    Returns canonical quote dict keyed by symbol.
+    """
+    if DATA_SOURCE == "kite" and _kite_client:
+        from tools.kite_market_data import get_live_quote as kite_quote
+        return kite_quote(_kite_client, symbols)
+
+    from tools.yfinance_fallback import get_live_quote as yf_quote
+    return yf_quote(symbols)
 
 
-def _to_fyers_symbol(symbol: str) -> str:
-    """Convert clean symbol to Fyers format."""
-    if symbol in FYERS_INDEX_MAP:
-        return FYERS_INDEX_MAP[symbol]
-    return f"NSE:{symbol}-EQ"
+def get_options_chain(underlying: str, expiry_date: str) -> pd.DataFrame:
+    """Fetch options chain. Only supported on Kite backend."""
+    if DATA_SOURCE == "kite" and _kite_client:
+        from tools.kite_market_data import get_options_chain as kite_chain
+        return kite_chain(_kite_client, underlying, expiry_date)
+
+    raise NotImplementedError("Options chain not available via yfinance.")
 
 
-def _to_yfinance_symbol(symbol: str) -> str:
-    """Convert clean symbol to yfinance format."""
-    if symbol in YFINANCE_INDEX_MAP:
-        return YFINANCE_INDEX_MAP[symbol]
-    return f"{symbol}.NS"
+def get_vwap(symbol: str) -> float:
+    """Calculate current VWAP from today's 1-min data."""
+    if DATA_SOURCE == "kite" and _kite_client:
+        from tools.kite_market_data import get_vwap as kite_vwap
+        return kite_vwap(_kite_client, symbol)
+
+    # Calculate from OHLCV for other backends
+    import datetime as dt
+    df = get_ohlcv(symbol, "1m", days=1)
+    today = dt.datetime.now().date()
+    if "timestamp" in df.columns:
+        df = df[df["timestamp"].dt.date == today]
+    if df.empty:
+        return 0.0
+    df["typical_price"] = (df["high"] + df["low"] + df["close"]) / 3
+    df["tp_vol"] = df["typical_price"] * df["volume"]
+    total_vol = df["volume"].sum()
+    if total_vol == 0:
+        return 0.0
+    return round(df["tp_vol"].sum() / total_vol, 2)
+
+
+# ── Legacy compatibility ─────────────────────────────────────────────────────
+# MarketDataProvider class for backward compatibility with existing code
+# that instantiates it. Delegates to the module-level functions above.
 
 
 class MarketDataProvider:
-    def __init__(self, fyers_broker: FyersBroker = None,
-                 sqlite_store=None):
-        self.fyers = fyers_broker
+    """Backward-compatible wrapper around the module-level functions."""
+
+    def __init__(self, fyers_broker=None, sqlite_store=None):
         self.db = sqlite_store
 
-    def _log_data_event(self, source: str, data_type: str, symbol: str = None,
-                        success: bool = True, error_message: str = None,
-                        fallback_used: bool = False):
-        if self.db:
-            self.db.log_data_event(
-                source=source, data_type=data_type, symbol=symbol,
-                success=success, error_message=error_message,
-                fallback_used=fallback_used,
-            )
-
     def get_quote(self, symbol: str) -> dict:
-        """Get current quote for a symbol.
-
-        Returns: {symbol, ltp, open, high, low, close, volume, timestamp}
-        """
-        # Try Fyers first
-        if self.fyers and self.fyers.is_authenticated:
-            try:
-                _rate_limit()
-                quote = self.fyers.get_quote(_to_fyers_symbol(symbol))
-                self._log_data_event("fyers", "quote", symbol)
-                return quote
-            except Exception as e:
-                logger.warning(f"Fyers quote failed for {symbol}: {e}, falling back to yfinance")
-
-        # Fallback: yfinance
-        return self._yfinance_quote(symbol)
-
-    def _yfinance_quote(self, symbol: str) -> dict:
-        try:
-            import yfinance as yf
-            _rate_limit()
-            ticker = yf.Ticker(_to_yfinance_symbol(symbol))
-            info = ticker.fast_info
-            quote = {
+        quotes = get_live_quote([symbol])
+        if symbol in quotes:
+            q = quotes[symbol]
+            return {
                 "symbol": symbol,
-                "ltp": info.last_price,
-                "open": info.open,
-                "high": info.day_high,
-                "low": info.day_low,
-                "close": info.previous_close,
-                "volume": info.last_volume,
-                "timestamp": datetime.now().isoformat(),
+                "ltp": q["last_price"],
+                "open": q["open"],
+                "high": q["high"],
+                "low": q["low"],
+                "close": q["close"],
+                "volume": q["volume"],
+                "timestamp": q["timestamp"].isoformat()
+                if hasattr(q["timestamp"], "isoformat") else str(q["timestamp"]),
             }
-            self._log_data_event("yfinance", "quote", symbol,
-                                 fallback_used=self.fyers is not None)
-            return quote
-        except Exception as e:
-            self._log_data_event("yfinance", "quote", symbol,
-                                 success=False, error_message=str(e))
-            raise RuntimeError(f"All data sources failed for {symbol}: {e}")
+        raise RuntimeError(f"No quote data for {symbol}")
+
+    def get_index_data(self, index: str = "NIFTY") -> dict:
+        return self.get_quote(index)
 
     def get_ohlcv(self, symbol: str, interval: str = "5",
                   count: int = 100) -> pd.DataFrame:
-        """Get OHLCV data.
-
-        Args:
-            symbol: Clean symbol (e.g., "RELIANCE")
-            interval: "1", "5", "15", "60", "D"
-            count: Number of bars
-
-        Returns: DataFrame with columns [datetime, open, high, low, close, volume]
-        """
-        # Try Fyers
-        if self.fyers and self.fyers.is_authenticated:
-            try:
-                _rate_limit()
-                end = datetime.now()
-                # Estimate start date from count and interval
-                minutes = int(interval) if interval != "D" else 1440
-                start = end - timedelta(minutes=minutes * count * 1.5)
-                df = self.fyers.get_history(
-                    symbol=_to_fyers_symbol(symbol),
-                    resolution=interval,
-                    start=start.strftime("%Y-%m-%d"),
-                    end=end.strftime("%Y-%m-%d"),
-                )
-                self._log_data_event("fyers", "ohlcv", symbol)
-                return df.tail(count).reset_index(drop=True)
-            except Exception as e:
-                logger.warning(f"Fyers OHLCV failed for {symbol}: {e}, falling back")
-
-        # Fallback: yfinance
-        return self._yfinance_ohlcv(symbol, interval, count)
-
-    def _yfinance_ohlcv(self, symbol: str, interval: str,
-                        count: int) -> pd.DataFrame:
-        try:
-            import yfinance as yf
-            _rate_limit()
-
-            # Map interval to yfinance format
-            yf_interval_map = {
-                "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
-            }
-            yf_interval = yf_interval_map.get(interval, "5m")
-
-            # yfinance period heuristic
-            if yf_interval in ("1m", "5m"):
-                period = "5d"
-            elif yf_interval in ("15m", "1h"):
-                period = "1mo"
-            else:
-                period = "6mo"
-
-            ticker = yf.Ticker(_to_yfinance_symbol(symbol))
-            df = ticker.history(period=period, interval=yf_interval)
-
-            if df.empty:
-                raise ValueError(f"No data returned for {symbol}")
-
-            df = df.reset_index()
-            # Normalize column names
-            rename_map = {
-                "Date": "datetime", "Datetime": "datetime",
-                "Open": "open", "High": "high", "Low": "low",
-                "Close": "close", "Volume": "volume",
-            }
-            df = df.rename(columns=rename_map)
-            df = df[["datetime", "open", "high", "low", "close", "volume"]]
-            df = df.tail(count).reset_index(drop=True)
-
-            self._log_data_event("yfinance", "ohlcv", symbol,
-                                 fallback_used=self.fyers is not None)
-            return df
-        except Exception as e:
-            self._log_data_event("yfinance", "ohlcv", symbol,
-                                 success=False, error_message=str(e))
-            raise RuntimeError(f"All data sources failed for {symbol} OHLCV: {e}")
-
-    def get_index_data(self, index: str = "NIFTY") -> dict:
-        """Get current index data (Nifty, BankNifty, VIX).
-
-        Returns: {symbol, ltp, open, high, low, close, volume, timestamp}
-        """
-        return self.get_quote(index)
+        yf_interval = YF_INTERVAL_MAP.get(interval, interval)
+        df = get_ohlcv(symbol, yf_interval, days=max(count // 10, 5))
+        # Rename timestamp→datetime for backward compat with old callers
+        if "timestamp" in df.columns and "datetime" not in df.columns:
+            df = df.rename(columns={"timestamp": "datetime"})
+        if "symbol" in df.columns:
+            df = df.drop(columns=["symbol"])
+        return df.tail(count).reset_index(drop=True)
 
     def get_historical(self, symbol: str, start: str, end: str,
                        interval: str = "5") -> pd.DataFrame:
-        """Get historical data for backtesting. Larger date ranges.
-
-        Args:
-            symbol: Clean symbol
-            start: "YYYY-MM-DD"
-            end: "YYYY-MM-DD"
-            interval: "1", "5", "15", "60", "D"
-        """
-        # Try Fyers
-        if self.fyers and self.fyers.is_authenticated:
-            try:
-                _rate_limit()
-                df = self.fyers.get_history(
-                    symbol=_to_fyers_symbol(symbol),
-                    resolution=interval,
-                    start=start,
-                    end=end,
-                )
-                self._log_data_event("fyers", "historical", symbol)
-                return df
-            except Exception as e:
-                logger.warning(f"Fyers historical failed for {symbol}: {e}")
-
-        # Fallback: yfinance
-        try:
-            import yfinance as yf
-            _rate_limit()
-
-            yf_interval_map = {
-                "1": "1m", "5": "5m", "15": "15m", "60": "1h", "D": "1d",
-            }
-            yf_interval = yf_interval_map.get(interval, "5m")
-
-            df = yf.download(
-                _to_yfinance_symbol(symbol),
-                start=start, end=end,
-                interval=yf_interval,
-                progress=False,
-            )
-            if df.empty:
-                raise ValueError(f"No historical data for {symbol}")
-
-            df = df.reset_index()
-            rename_map = {
-                "Date": "datetime", "Datetime": "datetime",
-                "Open": "open", "High": "high", "Low": "low",
-                "Close": "close", "Volume": "volume",
-            }
-            df = df.rename(columns=rename_map)
-            # Handle MultiIndex columns from yfinance
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-                df = df.rename(columns=rename_map)
-            df = df[["datetime", "open", "high", "low", "close", "volume"]]
-
-            self._log_data_event("yfinance", "historical", symbol,
-                                 fallback_used=self.fyers is not None)
-            return df
-        except Exception as e:
-            self._log_data_event("yfinance", "historical", symbol,
-                                 success=False, error_message=str(e))
-            raise RuntimeError(f"All sources failed for {symbol} historical: {e}")
+        from datetime import datetime
+        start_dt = datetime.strptime(start, "%Y-%m-%d")
+        end_dt = datetime.strptime(end, "%Y-%m-%d")
+        days = (end_dt - start_dt).days + 1
+        yf_interval = YF_INTERVAL_MAP.get(interval, interval)
+        df = get_ohlcv(symbol, yf_interval, days=days)
+        if "timestamp" in df.columns and "datetime" not in df.columns:
+            df = df.rename(columns={"timestamp": "datetime"})
+        if "symbol" in df.columns:
+            df = df.drop(columns=["symbol"])
+        return df

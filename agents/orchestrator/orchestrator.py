@@ -14,10 +14,12 @@ from config import CAPITAL, RISK_LIMITS, TRADING_MODE
 
 
 class OrchestratorAgent(BaseAgent):
-    def __init__(self, redis_store, sqlite_store, telegram_bot=None, broker=None):
+    def __init__(self, redis_store, sqlite_store, telegram_bot=None,
+                 broker=None):
         super().__init__("orchestrator", redis_store, sqlite_store)
         self.telegram = telegram_bot
         self.broker = broker
+        self.kite = None
         self._pending_proposals: dict = {}  # proposal_id -> proposal data
         self._human_approval_pending: dict = {}
 
@@ -30,25 +32,29 @@ class OrchestratorAgent(BaseAgent):
         })
         self.logger.info(f"System mode set to {TRADING_MODE}")
 
-        # Authenticate with Fyers (required for all modes including PAPER)
+        # Authenticate with Kite Connect
         if self.broker and self.telegram:
             try:
-                from tools.broker import load_or_refresh_token
-                access_token = load_or_refresh_token(self.telegram)
-                self.broker.authenticate_with_token(access_token)
-                self.logger.info("Fyers client initialised successfully")
+                from tools.kite_auth import load_or_refresh_token
+                from tools.market_data import set_kite_client
+                from tools.kite_market_data import build_instrument_cache
+
+                kite = load_or_refresh_token(self.telegram)
+                self.kite = kite
+                set_kite_client(kite)
+                self.broker.set_kite_client(kite)
+                self.logger.info("Kite authentication successful.")
+
+                build_instrument_cache(kite)
+                self.logger.info("Instrument cache built.")
             except TimeoutError:
-                self.logger.error("Fyers auth timed out — system halted")
-                self._halt_system("Fyers authentication timed out")
+                self._halt_system("Kite authentication timed out")
             except Exception as e:
-                self.logger.warning(
-                    f"Fyers auth failed: {e} — continuing without broker"
-                )
+                self.logger.warning(f"Kite auth failed: {e}. Continuing in paper mode.")
                 if self.telegram:
                     self.telegram.send_message(
-                        f"Fyers auth failed: {e}\n"
-                        "System running without broker (paper mode only).\n"
-                        "Send /authenticate to retry."
+                        f"Kite auth failed: {e}\n"
+                        "Continuing in paper mode with yfinance data."
                     )
 
     def on_stop(self):
@@ -110,23 +116,19 @@ class OrchestratorAgent(BaseAgent):
             self._switch_to_paper()
 
     def _handle_authenticate(self):
-        """Force re-authentication with Fyers."""
-        if not self.broker or not self.telegram:
-            if self.telegram:
-                self.telegram.send_message(
-                    "Broker not configured. Check FYERS_CLIENT_ID in .env."
-                )
-            return
+        """Force re-authentication with Kite Connect."""
         try:
-            from tools.broker import force_reauthenticate
-            access_token = force_reauthenticate(self.telegram)
-            self.broker.authenticate_with_token(access_token)
-            self.logger.info("Fyers re-authenticated successfully")
-        except TimeoutError:
-            if self.telegram:
-                self.telegram.send_message(
-                    "Re-authentication timed out. Send /authenticate to try again."
-                )
+            from tools.kite_auth import force_reauthenticate
+            from tools.market_data import set_kite_client
+            from tools.kite_market_data import build_instrument_cache
+
+            kite = force_reauthenticate(self.telegram)
+            self.kite = kite
+            set_kite_client(kite)
+            if self.broker:
+                self.broker.set_kite_client(kite)
+            build_instrument_cache(kite)
+            self.logger.info("Re-authentication successful.")
         except Exception as e:
             self.logger.error(f"Re-authentication failed: {e}")
             if self.telegram:
