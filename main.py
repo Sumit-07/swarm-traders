@@ -18,6 +18,9 @@ from config import (
     AGENT_IDS,
     CAPITAL,
     DATA_DIR,
+    FYERS_CLIENT_ID,
+    FYERS_REDIRECT_URI,
+    FYERS_SECRET_KEY,
     LOGS_DIR,
     REDIS_HOST,
     REDIS_PORT,
@@ -59,6 +62,7 @@ def create_agents(redis_store, sqlite_store):
     from agents.execution_agent.execution_agent import ExecutionAgent
     from agents.compliance_agent.compliance_agent import ComplianceAgent
     from comms.telegram_bot import TelegramBot
+    from tools.broker import FyersBroker
 
     # Telegram bot
     telegram = TelegramBot(
@@ -70,15 +74,22 @@ def create_agents(redis_store, sqlite_store):
     # Market data provider
     market_data = MarketDataProvider(sqlite_store=sqlite_store)
 
+    # Fyers broker (None if credentials not configured)
+    broker = None
+    if FYERS_CLIENT_ID and FYERS_SECRET_KEY:
+        broker = FyersBroker(FYERS_CLIENT_ID, FYERS_SECRET_KEY, FYERS_REDIRECT_URI)
+
     # Create agents
     agents = {
-        "orchestrator": OrchestratorAgent(redis_store, sqlite_store, telegram),
+        "orchestrator": OrchestratorAgent(
+            redis_store, sqlite_store, telegram, broker=broker,
+        ),
         "strategist": StrategistAgent(redis_store, sqlite_store),
         "risk_strategist": RiskStrategistAgent(redis_store, sqlite_store),
         "data_agent": DataAgent(redis_store, sqlite_store, market_data),
         "analyst": AnalystAgent(redis_store, sqlite_store),
         "risk_agent": RiskAgent(redis_store, sqlite_store),
-        "execution_agent": ExecutionAgent(redis_store, sqlite_store),
+        "execution_agent": ExecutionAgent(redis_store, sqlite_store, broker=broker),
         "compliance_agent": ComplianceAgent(redis_store, sqlite_store),
     }
 

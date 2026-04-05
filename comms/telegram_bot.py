@@ -57,6 +57,7 @@ class TelegramBot:
                 "strategy": self._cmd_strategy,
                 "report": self._cmd_report,
                 "agents": self._cmd_agents,
+                "authenticate": self._cmd_authenticate,
             }
             for cmd_name, handler in commands.items():
                 self._app.add_handler(CommandHandler(cmd_name, handler))
@@ -112,6 +113,51 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             logger.info(f"[TELEGRAM FALLBACK] {text}")
+
+    def send_auth_request(self, message: str, url: str, button_text: str) -> None:
+        """Send a Telegram message with an inline button that opens a URL.
+
+        Used specifically for Fyers OAuth authentication.
+
+        Args:
+            message: Text message to display above the button
+            url: URL the button opens (Fyers auth URL)
+            button_text: Label shown on the button
+        """
+        if self._stub_mode:
+            logger.info(f"[TELEGRAM] {message}")
+            print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
+            return
+
+        try:
+            import httpx
+
+            payload = {
+                "chat_id": self.chat_id,
+                "text": message,
+                "parse_mode": "HTML",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": button_text, "url": url}]
+                    ]
+                },
+            }
+
+            response = httpx.post(
+                f"https://api.telegram.org/bot{self.token}/sendMessage",
+                json=payload,
+                timeout=10,
+            )
+
+            if not response.is_success:
+                logger.warning(
+                    f"Telegram send_auth_request failed: {response.status_code} "
+                    f"{response.text}"
+                )
+                print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
+        except Exception as e:
+            logger.error(f"Failed to send auth request via Telegram: {e}")
+            print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
 
     def send_approval_request(self, proposal: dict):
         """Send a trade proposal requiring approval."""
@@ -199,6 +245,12 @@ class TelegramBot:
         proposal_id = args[0] if args else ""
         self._publish_command("REJECT", proposal_id=proposal_id)
         await update.message.reply_text(f"Rejected: {proposal_id}")
+
+    async def _cmd_authenticate(self, update, context):
+        self._publish_command("AUTHENTICATE")
+        await update.message.reply_text(
+            "Re-authentication requested. Check for auth button shortly."
+        )
 
     async def _handle_text(self, update, context):
         """Handle plain text responses (YES/NO/EDIT)."""

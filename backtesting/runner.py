@@ -28,7 +28,7 @@ REPORTS_DIR = Path("backtesting/reports")
 STRATEGY_CONFIGS = {
     "RSI_MEAN_REVERSION": {
         "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
-        "direction": "LONG",
+        "direction": "BOTH",
         "entry_indicator": "rsi",
         "entry_threshold": 32,       # RSI < 32 to enter
         "entry_compare": "below",
@@ -41,7 +41,7 @@ STRATEGY_CONFIGS = {
     },
     "VWAP_REVERSION": {
         "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
-        "direction": "LONG",
+        "direction": "BOTH",
         "entry_indicator": "vwap_deviation",
         "entry_threshold": -1.2,     # price > 1.2% below VWAP
         "entry_compare": "below",
@@ -53,7 +53,7 @@ STRATEGY_CONFIGS = {
     },
     "OPENING_RANGE_BREAKOUT": {
         "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
-        "direction": "LONG",
+        "direction": "BOTH",
         "entry_indicator": "orb",
         "orb_bars": 3,               # first 15 min = 3 x 5-min bars
         "volume_confirmation": True,
@@ -505,6 +505,35 @@ def main():
         if args.report:
             for name, result in results.items():
                 result.to_html()
+        # Print comparison table
+        if results:
+            print(f"\n{'=' * 100}")
+            print(f"STRATEGY COMPARISON ({args.start} to {args.end})")
+            print(f"{'=' * 100}")
+            header = (f"{'Strategy':<28} {'Trades':>6} {'Win%':>6} "
+                      f"{'PF':>6} {'Return%':>9} {'Sharpe':>7} "
+                      f"{'MaxDD%':>7} {'CL':>4} {'Gate':>6}")
+            print(header)
+            print("-" * 100)
+            for name, r in results.items():
+                m = r.metrics
+                gate_pass = sum(1 for c in r.gate_checks.values() if c["passed"])
+                gate_total = len(r.gate_checks)
+                gate_str = f"{gate_pass}/{gate_total}"
+                if r.passed_gate:
+                    gate_str += " ✓"
+                print(f"{name:<28} {m['total_trades']:>6} "
+                      f"{m['win_rate']:>5.1%} {m['profit_factor']:>6.2f} "
+                      f"{m['total_return_pct']:>+8.2f}% "
+                      f"{m['sharpe_ratio']:>7.2f} "
+                      f"{m['max_drawdown_pct']:>6.1f}% "
+                      f"{m['consecutive_losses_max']:>4} {gate_str:>6}")
+            print("=" * 100)
+            passed = [n for n, r in results.items() if r.passed_gate]
+            if passed:
+                print(f"\nStrategies PASSING all gate criteria: {', '.join(passed)}")
+            else:
+                print(f"\nNo strategies passed all gate criteria.")
     else:
         result = runner.run(args.strategy, args.start, args.end, args.interval)
         print(result.summary())
