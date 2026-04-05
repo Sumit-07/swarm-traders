@@ -70,6 +70,7 @@ class OrchestratorAgent(BaseAgent):
             MessageType.ALERT: self._handle_alert,
             MessageType.COMMAND: self._handle_command,
             MessageType.REQUEST: self._handle_request,
+            MessageType.SYNTHESIS: self._handle_synthesis,
         }
         handler = handlers.get(message.type, self._handle_unknown)
         handler(message)
@@ -136,6 +137,21 @@ class OrchestratorAgent(BaseAgent):
             self.logger.error(f"Re-authentication failed: {e}")
             if self.telegram:
                 self.telegram.send_message(f"Re-authentication failed: {e}")
+
+    def _handle_synthesis(self, message: AgentMessage):
+        """Handle Optimizer synthesis — ALWAYS forward to Telegram. No exceptions."""
+        telegram_text = message.payload.get("telegram_message", "")
+        if not telegram_text:
+            telegram_text = (
+                f"OPTIMIZER REPORT — {message.payload.get('meeting_date', 'unknown')}\n"
+                "Synthesis received but message was empty."
+            )
+        if self.telegram:
+            self.telegram.send_message(telegram_text)
+        self.logger.info(
+            "Optimizer synthesis forwarded to Telegram. %d learnings written.",
+            message.payload.get("learnings_count", 0),
+        )
 
     def _handle_request(self, message: AgentMessage):
         self.logger.info(f"Request from {message.from_agent}: {message.payload}")

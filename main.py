@@ -54,7 +54,7 @@ def create_stores():
 
 
 def create_agents(redis_store, sqlite_store):
-    """Create all 8 agent instances."""
+    """Create all 9 agent instances."""
     from tools.broker import KiteBroker
     from tools.market_data import MarketDataProvider
     from agents.orchestrator.orchestrator import OrchestratorAgent
@@ -65,6 +65,7 @@ def create_agents(redis_store, sqlite_store):
     from agents.risk_agent.risk_agent import RiskAgent
     from agents.execution_agent.execution_agent import ExecutionAgent
     from agents.compliance_agent.compliance_agent import ComplianceAgent
+    from agents.optimizer.optimizer import OptimizerAgent
     from comms.telegram_bot import TelegramBot
 
     # Telegram bot
@@ -96,12 +97,13 @@ def create_agents(redis_store, sqlite_store):
             redis_store, sqlite_store, broker=broker,
         ),
         "compliance_agent": ComplianceAgent(redis_store, sqlite_store),
+        "optimizer": OptimizerAgent(redis_store, sqlite_store),
     }
 
     return agents, telegram
 
 
-def create_graphs(agents):
+def create_graphs(agents, redis_store=None, sqlite_store=None):
     """Build all LangGraph sub-graphs."""
     from graph.swarm_graph import (
         build_morning_graph,
@@ -109,6 +111,7 @@ def create_graphs(agents):
         build_force_close_graph,
         build_eod_graph,
     )
+    from graph.meeting_subgraph import build_meeting_graph
 
     graphs = {
         "morning": build_morning_graph(
@@ -129,6 +132,8 @@ def create_graphs(agents):
             agents["orchestrator"],
         ),
     }
+    if sqlite_store and redis_store:
+        graphs["meeting"] = build_meeting_graph(sqlite_store, redis_store)
     return graphs
 
 
@@ -228,7 +233,7 @@ def run_swarm():
 
     redis_store, sqlite_store = create_stores()
     agents, telegram = create_agents(redis_store, sqlite_store)
-    graphs = create_graphs(agents)
+    graphs = create_graphs(agents, redis_store, sqlite_store)
 
     # Start all agents
     print("\nStarting agents...")

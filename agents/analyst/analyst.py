@@ -28,6 +28,20 @@ class AnalystAgent(BaseAgent):
     def on_stop(self):
         pass
 
+    def on_wake(self):
+        """Load relevant learnings from knowledge graph into system prompt."""
+        from memory.knowledge_graph import load_memories
+        regime = "unknown"
+        strategy_type = "all"
+        strategy_data = self.redis.get_state("state:active_strategy") or {}
+        if strategy_data:
+            regime = strategy_data.get("regime", "unknown")
+            strategy_type = strategy_data.get("strategy", "all")
+        memories = load_memories(self.sqlite, "analyst", regime, strategy_type)
+        if memories:
+            self._extra_context = memories
+            self.logger.info(f"Loaded {len(memories.splitlines())} learnings from knowledge graph")
+
     def on_message(self, message: AgentMessage):
         if message.type == MessageType.COMMAND:
             command = message.payload.get("command", "")
