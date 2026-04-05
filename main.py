@@ -13,6 +13,9 @@ import signal
 import sys
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from config import (
     AGENT_IDS,
@@ -133,7 +136,7 @@ def verify():
     """Run Phase 1 + Phase 2 verification."""
     print("=" * 60)
     print("Trading Agent Swarm — Verification")
-    print(f"Time: {datetime.now().isoformat()}")
+    print(f"Time: {datetime.now(IST).isoformat()}")
     print(f"Mode: {TRADING_MODE}")
     print("=" * 60)
 
@@ -219,7 +222,7 @@ def run_swarm():
     """Start the full trading swarm with scheduler."""
     print("=" * 60)
     print("Trading Agent Swarm — Starting")
-    print(f"Time: {datetime.now().isoformat()}")
+    print(f"Time: {datetime.now(IST).isoformat()}")
     print(f"Mode: {TRADING_MODE}")
     print("=" * 60)
 
@@ -245,7 +248,7 @@ def run_swarm():
         f"Trading system online.\n"
         f"Mode: {TRADING_MODE}\n"
         f"Agents: {len(agents)} active\n"
-        f"Time: {datetime.now().isoformat()}"
+        f"Time: {datetime.now(IST).isoformat()}"
     )
 
     print("\nSwarm is running. Press Ctrl+C to stop.")

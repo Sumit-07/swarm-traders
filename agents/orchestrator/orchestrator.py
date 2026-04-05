@@ -5,6 +5,9 @@ and interfaces with the human owner via Telegram.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import (
@@ -28,7 +31,7 @@ class OrchestratorAgent(BaseAgent):
         self.redis.set_state("state:system_mode", {
             "mode": TRADING_MODE,
             "set_by": "orchestrator",
-            "set_at": datetime.now().isoformat(),
+            "set_at": datetime.now(IST).isoformat(),
         })
         self.logger.info(f"System mode set to {TRADING_MODE}")
 
@@ -169,7 +172,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             result = self.call_llm("PROMPT_CONFLICT_RESOLUTION", {
                 "system_mode": self._get_system_mode(),
-                "current_time": datetime.now().strftime("%H:%M IST"),
+                "current_time": datetime.now(IST).strftime("%H:%M IST"),
                 "open_positions_count": len(positions.get("positions", [])),
                 "conservative_strategy": "active",
                 "risk_strategy": "active",
@@ -198,7 +201,7 @@ class OrchestratorAgent(BaseAgent):
             self.logger.error(f"Conflict resolution LLM call failed: {e}")
 
     def _get_todays_pnl(self) -> float:
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(IST).strftime("%Y-%m-%d")
         pnl_data = self.sqlite.get_daily_pnl(date=today)
         return pnl_data.get("total_pnl", 0) if pnl_data else 0
 
@@ -229,7 +232,7 @@ class OrchestratorAgent(BaseAgent):
         self.redis.set_state("state:system_mode", {
             "mode": "HALTED",
             "set_by": "orchestrator",
-            "set_at": datetime.now().isoformat(),
+            "set_at": datetime.now(IST).isoformat(),
             "reason": reason,
         })
         # Broadcast halt to all agents
@@ -248,7 +251,7 @@ class OrchestratorAgent(BaseAgent):
         self.redis.set_state("state:system_mode", {
             "mode": "PAPER",
             "set_by": "orchestrator",
-            "set_at": datetime.now().isoformat(),
+            "set_at": datetime.now(IST).isoformat(),
         })
         self.send_message(
             to_agent="broadcast",
@@ -286,14 +289,14 @@ class OrchestratorAgent(BaseAgent):
             "type": "COMMAND",
             "priority": "CRITICAL",
             "payload": {"action": "SWITCH_TO_LIVE", "cap": INITIAL_LIVE_CAP},
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(IST).isoformat(),
             "status": "EXECUTED",
         })
 
         self.redis.set_state("state:system_mode", {
             "mode": "LIVE",
             "set_by": "orchestrator",
-            "set_at": datetime.now().isoformat(),
+            "set_at": datetime.now(IST).isoformat(),
             "live_cap": INITIAL_LIVE_CAP,
         })
 
@@ -320,7 +323,7 @@ class OrchestratorAgent(BaseAgent):
         self.redis.set_state("state:system_mode", {
             "mode": "PAPER",
             "set_by": "orchestrator",
-            "set_at": datetime.now().isoformat(),
+            "set_at": datetime.now(IST).isoformat(),
         })
         self.send_message(
             to_agent="broadcast",
@@ -357,11 +360,11 @@ class OrchestratorAgent(BaseAgent):
         try:
             briefing = self.call_llm("PROMPT_MORNING_BRIEFING", {
                 "system_mode": self._get_system_mode(),
-                "current_time": datetime.now().strftime("%H:%M IST"),
+                "current_time": datetime.now(IST).strftime("%H:%M IST"),
                 "open_positions_count": 0,
                 "conservative_strategy": cons_strategy.get("strategy", "N/A"),
                 "risk_strategy": risk_strategy.get("strategy", "N/A"),
-                "date": datetime.now().strftime("%Y-%m-%d"),
+                "date": datetime.now(IST).strftime("%Y-%m-%d"),
                 "global_cues_summary": "Data pending",
                 "expected_open": snapshot.get("nifty", {}).get("ltp", "N/A"),
                 "vix": snapshot.get("indiavix", {}).get("ltp", "N/A"),
@@ -384,7 +387,7 @@ class OrchestratorAgent(BaseAgent):
 
     def generate_eod_summary(self, state: dict) -> str:
         """Generate EOD summary via LLM for Telegram."""
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(IST).strftime("%Y-%m-%d")
         trades = self.sqlite.get_trades(date=today)
 
         wins = sum(1 for t in trades if (t.get("pnl") or 0) > 0)
@@ -395,7 +398,7 @@ class OrchestratorAgent(BaseAgent):
         try:
             summary = self.call_llm("PROMPT_EOD_SUMMARY", {
                 "system_mode": self._get_system_mode(),
-                "current_time": datetime.now().strftime("%H:%M IST"),
+                "current_time": datetime.now(IST).strftime("%H:%M IST"),
                 "open_positions_count": 0,
                 "conservative_strategy": "N/A",
                 "risk_strategy": "N/A",

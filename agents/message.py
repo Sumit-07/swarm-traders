@@ -7,6 +7,9 @@ Payload schemas define the structured data exchanged for specific operations.
 from datetime import datetime
 from enum import Enum
 from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from pydantic import BaseModel, Field
 
@@ -39,7 +42,7 @@ class AgentMessage(BaseModel):
     type: MessageType
     priority: Priority = Priority.NORMAL
     payload: dict = Field(default_factory=dict)
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = Field(default_factory=lambda: datetime.now(IST).isoformat())
     ttl_seconds: int = 300
     requires_response: bool = False
     correlation_id: str | None = None
@@ -103,7 +106,7 @@ class ApprovedOrder(BaseModel):
     bucket: str
     mode: str  # PAPER / LIVE
     approved_by: str
-    approved_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    approved_at: str = Field(default_factory=lambda: datetime.now(IST).isoformat())
 
 
 class FillConfirmation(BaseModel):

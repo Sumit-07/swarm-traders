@@ -5,6 +5,9 @@ market data with machine-like precision. No opinions, no biases.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority
@@ -59,7 +62,7 @@ class DataAgent(BaseAgent):
                 self.logger.warning(f"Failed to fetch {index}: {e}")
                 snapshot[index.lower()] = {"error": str(e)}
 
-        snapshot["timestamp"] = datetime.now().isoformat()
+        snapshot["timestamp"] = datetime.now(IST).isoformat()
         self.redis.set_market_data("data:market_snapshot", snapshot, ttl=120)
         self._last_action = "pulled market snapshot"
 
@@ -92,7 +95,7 @@ class DataAgent(BaseAgent):
                         if not indicators["adx"].dropna().empty else None,
                     "volume_ratio": float(indicators["volume_ratio"].dropna().iloc[-1])
                         if not indicators["volume_ratio"].dropna().empty else None,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now(IST).isoformat(),
                 }
                 self.redis.set_market_data(
                     f"data:watchlist_ticks:{symbol}", latest, ttl=120,
@@ -136,7 +139,7 @@ class DataAgent(BaseAgent):
                     "risk_events_today": []}
         try:
             result = self.call_llm("PROMPT_NEWS_SUMMARY", {
-                "current_time": datetime.now().strftime("%H:%M IST"),
+                "current_time": datetime.now(IST).strftime("%H:%M IST"),
                 "headlines_list": "\n".join(
                     f"- {h}" for h in headlines[:15]
                 ),
@@ -158,5 +161,5 @@ class DataAgent(BaseAgent):
             self.pull_watchlist_data()
 
         state["market_data_ready"] = True
-        state["last_data_update"] = datetime.now().isoformat()
+        state["last_data_update"] = datetime.now(IST).isoformat()
         return state

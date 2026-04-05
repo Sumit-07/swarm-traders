@@ -5,6 +5,9 @@ executes them, confirms fills, and reports back. Never second-guesses.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import (
@@ -78,7 +81,7 @@ class ExecutionAgent(BaseAgent):
         try:
             result = self.call_llm("PROMPT_ORDER_TYPE_SELECTION", {
                 "system_mode": order.get("mode", "PAPER"),
-                "current_time": datetime.now().strftime("%H:%M IST"),
+                "current_time": datetime.now(IST).strftime("%H:%M IST"),
                 "symbol": order.get("symbol", ""),
                 "direction": order.get("transaction_type", "BUY"),
                 "desired_price": order.get("price", 0),
@@ -154,7 +157,7 @@ class ExecutionAgent(BaseAgent):
                 "slippage": round(abs(fill_price - price) * qty, 2),
                 "brokerage": 20,  # Flat brokerage
                 "total_cost": round(fill_price * qty + 20, 2),
-                "filled_at": datetime.now().isoformat(),
+                "filled_at": datetime.now(IST).isoformat(),
                 "status": "FILLED",
                 "mode": "LIVE",
                 "broker_order_id": broker_order_id,

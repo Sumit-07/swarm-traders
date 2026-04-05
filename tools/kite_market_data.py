@@ -5,6 +5,9 @@ Never called directly by agents — always called via tools/market_data.py route
 """
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 import pandas as pd
 
@@ -93,7 +96,7 @@ def get_ohlcv(kite, symbol: str, interval: str, days: int = 60) -> pd.DataFrame:
         DataFrame with columns: timestamp, open, high, low, close, volume, symbol
     """
     token = get_instrument_token(symbol)
-    to_date = datetime.now()
+    to_date = datetime.now(IST)
     from_date = to_date - timedelta(days=days)
 
     try:
@@ -162,7 +165,7 @@ def get_live_quote(kite, symbols: list[str]) -> dict:
             "change_pct": round(
                 ((q["last_price"] - q["ohlc"]["close"]) / q["ohlc"]["close"]) * 100, 2
             ) if q["ohlc"]["close"] else 0,
-            "timestamp": datetime.now(),
+            "timestamp": datetime.now(IST),
         }
 
     return result
@@ -232,7 +235,7 @@ def get_vwap(kite, symbol: str) -> float:
     """Calculate current VWAP from today's 1-minute candles."""
     df = get_ohlcv(kite, symbol, interval="minute", days=1)
 
-    today = datetime.now().date()
+    today = datetime.now(IST).date()
     df = df[df["timestamp"].dt.date == today]
 
     if df.empty:

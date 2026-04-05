@@ -10,6 +10,9 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -144,7 +147,7 @@ class BaseAgent(ABC):
         # Track pending responses
         if requires_response:
             self._pending_responses[msg.message_id] = {
-                "sent_at": datetime.now(),
+                "sent_at": datetime.now(IST),
                 "timeout": timedelta(seconds=30),
                 "retries": 0,
                 "to_agent": to_agent,
@@ -182,7 +185,7 @@ class BaseAgent(ABC):
 
                 # Check TTL
                 msg_time = datetime.fromisoformat(msg.timestamp)
-                age = (datetime.now() - msg_time).total_seconds()
+                age = (datetime.now(IST) - msg_time).total_seconds()
                 if age > msg.ttl_seconds:
                     self.logger.warning(
                         f"Expired message from {msg.from_agent}: "
@@ -220,7 +223,7 @@ class BaseAgent(ABC):
 
     def _check_pending_responses(self):
         """Check for timed-out pending responses. Called every 10 seconds."""
-        now = datetime.now()
+        now = datetime.now(IST)
         expired = []
         for msg_id, meta in self._pending_responses.items():
             if now - meta["sent_at"] > meta["timeout"]:
@@ -276,7 +279,7 @@ class BaseAgent(ABC):
         self.redis.set_state(f"agent:{self.agent_id}:heartbeat", {
             "agent_id": self.agent_id,
             "state": self.state.value,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(IST).isoformat(),
             "last_action": self._last_action,
             "llm_calls_today": self._llm_call_count,
         })
@@ -290,7 +293,7 @@ class BaseAgent(ABC):
         agents = self.redis.get_state("state:all_agents") or {}
         agents[self.agent_id] = {
             "state": self.state.value,
-            "started_at": datetime.now().isoformat(),
+            "started_at": datetime.now(IST).isoformat(),
             "last_action": self._last_action,
         }
         self.redis.set_state("state:all_agents", agents)
@@ -300,7 +303,7 @@ class BaseAgent(ABC):
         agents = self.redis.get_state("state:all_agents") or {}
         if self.agent_id in agents:
             agents[self.agent_id]["state"] = AgentState.OFFLINE.value
-            agents[self.agent_id]["stopped_at"] = datetime.now().isoformat()
+            agents[self.agent_id]["stopped_at"] = datetime.now(IST).isoformat()
             self.redis.set_state("state:all_agents", agents)
 
     # ----------------------------------------------------------------
