@@ -32,7 +32,7 @@ streamlit run dashboard/app.py
 python -m backtesting.runner --strategy RSI_MEAN_REVERSION --start 2024-06-01 --end 2024-12-31 --report
 
 # Tests
-pytest tests/                          # full suite (134 tests)
+pytest tests/                          # full suite (148 tests)
 pytest tests/test_indicators.py        # single test file
 pytest tests/test_live_trading.py -v   # live trading tests
 ```
@@ -65,7 +65,7 @@ No agent may send directly to Execution Agent except Orchestrator. All trade pro
 
 ### Key Directories
 - `agents/`: Each agent has its own directory with `soul.md`, `agent.md`, `prompts.md`, and `.py` implementation. All inherit from `base_agent.py`.
-- `tools/`: Broker API wrapper (`broker.py` — Fyers live orders), market data, indicators (pure Python, NO TA-Lib), LLM provider (`llm.py` — OpenAI/Gemini routing), order simulator, position monitor
+- `tools/`: Broker API wrapper (`broker.py` — Kite Connect live orders), market data router (`market_data.py`), Kite auth (`kite_auth.py` — telegram + TOTP modes), Kite market data (`kite_market_data.py`), Kite order placement (`kite_broker.py`), WebSocket ticker (`kite_ticker.py`), yfinance fallback, indicators (pure Python, NO TA-Lib), LLM provider (`llm.py` — OpenAI/Gemini routing), order simulator, position monitor
 - `graph/`: LangGraph graph definition (`swarm_graph.py`), shared state TypedDict (`state.py`), conditional edges (`edges.py`)
 - `memory/`: Redis and SQLite wrappers, DB schema
 - `comms/`: Telegram bot for human interface
@@ -122,4 +122,4 @@ All 6 phases are complete:
 
 ## Tech Stack
 
-Python 3.10+, LangGraph/LangChain, langchain-openai, langchain-google-genai, Fyers API v3 (broker), yfinance (fallback data), Redis, SQLite/SQLAlchemy, APScheduler, python-telegram-bot, Streamlit/Plotly (dashboard), pandas-ta (indicators), Pydantic, Loguru
+Python 3.10+, LangGraph/LangChain, langchain-openai, langchain-google-genai, Kite Connect (Zerodha broker), yfinance (fallback data), Redis, SQLite/SQLAlchemy, APScheduler, python-telegram-bot, Streamlit/Plotly (dashboard), pyotp (TOTP auto-login), Pydantic, Loguru

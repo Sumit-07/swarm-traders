@@ -1,6 +1,6 @@
 """Historical data loader for backtesting.
 
-Loads OHLCV data from Fyers (primary) or yfinance (fallback).
+Loads OHLCV data from Kite Connect (primary) or yfinance (fallback).
 Validates data quality and fills gaps.
 """
 

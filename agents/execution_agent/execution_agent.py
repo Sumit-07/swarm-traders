@@ -113,9 +113,8 @@ class ExecutionAgent(BaseAgent):
             return None
 
     def _execute_live(self, order: dict) -> dict | None:
-        """Execute order via live Fyers broker API."""
+        """Execute order via live Kite Connect broker API."""
         symbol = order.get("symbol", "")
-        fyers_symbol = f"NSE:{symbol}-EQ"
         qty = order.get("quantity", 0)
         price = order.get("price", 0)
         txn_type = order.get("transaction_type", "BUY")
@@ -123,9 +122,9 @@ class ExecutionAgent(BaseAgent):
 
         try:
             result = self.broker.place_order(
-                symbol=fyers_symbol, qty=qty, order_type=order_type,
+                symbol=symbol, qty=qty, order_type=order_type,
                 price=price, transaction_type=txn_type,
-                product_type="INTRADAY",
+                product_type="MIS",
             )
 
             if result["status"] != "PLACED":
@@ -243,12 +242,11 @@ class ExecutionAgent(BaseAgent):
 
         if mode == "LIVE" and self.broker and self.broker.is_authenticated:
             symbol = order.get("symbol", "")
-            fyers_symbol = f"NSE:{symbol}-EQ"
             direction = "LONG" if order.get("transaction_type") == "BUY" else "SHORT"
             sl_txn = "SELL" if direction == "LONG" else "BUY"
 
             result = self.broker.place_stoploss_order(
-                symbol=fyers_symbol,
+                symbol=symbol,
                 qty=order.get("quantity", 0),
                 trigger_price=sl_price,
                 transaction_type=sl_txn,
