@@ -32,14 +32,14 @@ streamlit run dashboard/app.py
 python -m backtesting.runner --strategy RSI_MEAN_REVERSION --start 2024-06-01 --end 2024-12-31 --report
 
 # Tests
-pytest tests/                          # full suite (148 tests)
+pytest tests/                          # full suite (179 tests)
 pytest tests/test_indicators.py        # single test file
 pytest tests/test_live_trading.py -v   # live trading tests
 ```
 
 ## Architecture
 
-### Agent Roster (8 agents)
+### Agent Roster (10 agents)
 | Agent | LLM | Role |
 |---|---|---|
 | `orchestrator` | GPT-4o | Master coordinator, conflict resolver, Telegram interface |
@@ -50,6 +50,8 @@ pytest tests/test_live_trading.py -v   # live trading tests
 | `risk_agent` | GPT-4o mini | Position sizing, stop-loss, drawdown guard — last gatekeeper |
 | `execution_agent` | GPT-4o mini | Order placement (Fyers API live, simulator for paper) |
 | `compliance_agent` | Gemini Flash | SEBI rules, audit trail, EOD reports |
+| `optimizer` | GPT-4o | Post-market learning extraction, knowledge graph, strategy feedback |
+| `position_monitor` | None | Pure Python position watchdog — threshold alerts to Orchestrator |
 
 ### Data Flow
 ```
