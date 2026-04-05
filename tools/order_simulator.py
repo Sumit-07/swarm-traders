@@ -8,6 +8,9 @@ position tracking, and P&L calculation.
 """
 
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 from uuid import uuid4
 
 from config import SIMULATION, RISK_LIMITS
@@ -66,7 +69,7 @@ class OrderSimulator:
             "slippage": slippage,
             "brokerage": brokerage,
             "total_cost": total_cost,
-            "filled_at": datetime.now().isoformat(),
+            "filled_at": datetime.now(IST).isoformat(),
             "status": "FILLED",
         }
 

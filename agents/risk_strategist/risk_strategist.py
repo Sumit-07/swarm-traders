@@ -5,6 +5,9 @@ Disciplined speculator — thinks in expected value, not win rate.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority
@@ -56,7 +59,7 @@ class RiskStrategistAgent(BaseAgent):
                     "call_premium": "N/A",
                     "put_premium": "N/A",
                     "iv_percentile": "N/A",
-                    "day_of_week": datetime.now().strftime("%A"),
+                    "day_of_week": datetime.now(IST).strftime("%A"),
                     "nifty_trend": nifty.get("change", "unknown"),
                     "banknifty_trend": market.get("banknifty", {}).get("change", "unknown"),
                     "fii_options_summary": "N/A",

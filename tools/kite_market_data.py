@@ -5,12 +5,36 @@ Never called directly by agents — always called via tools/market_data.py route
 """
 
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 import pandas as pd
 
 from tools.logger import get_agent_logger
 
 logger = get_agent_logger("kite_market_data")
+
+# ── Index symbol mapping ─────────────────────────────────────────────────────
+# Kite uses special names for indices; our system uses short names.
+
+KITE_INDEX_MAP = {
+    "NIFTY": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "INDIAVIX": "INDIA VIX",
+    "FINNIFTY": "NIFTY FIN SERVICE",
+    "MIDCPNIFTY": "NIFTY MID SELECT",
+}
+
+# Reverse map for converting Kite names back
+_REVERSE_INDEX_MAP = {v: k for k, v in KITE_INDEX_MAP.items()}
+
+
+def _to_kite_symbol(symbol: str, prefix: str = "NSE") -> str:
+    """Convert our short symbol to Kite's quote key format."""
+    kite_name = KITE_INDEX_MAP.get(symbol, symbol)
+    return f"{prefix}:{kite_name}"
+
 
 # ── Instrument token cache ────────────────────────────────────────────────────
 
@@ -28,8 +52,12 @@ def build_instrument_cache(kite) -> None:
     _instrument_cache = {
         inst["tradingsymbol"]: inst["instrument_token"]
         for inst in instruments
-        if inst["segment"] == "NSE"
     }
+    # Add short aliases for indices (NIFTY → NIFTY 50's token, etc.)
+    for short_name, kite_name in KITE_INDEX_MAP.items():
+        if kite_name in _instrument_cache and short_name not in _instrument_cache:
+            _instrument_cache[short_name] = _instrument_cache[kite_name]
+
     # Also add NFO instruments for F&O
     nfo_instruments = kite.instruments("NFO")
     nfo_cache = {
@@ -68,7 +96,7 @@ def get_ohlcv(kite, symbol: str, interval: str, days: int = 60) -> pd.DataFrame:
         DataFrame with columns: timestamp, open, high, low, close, volume, symbol
     """
     token = get_instrument_token(symbol)
-    to_date = datetime.now()
+    to_date = datetime.now(IST)
     from_date = to_date - timedelta(days=days)
 
     try:
@@ -111,7 +139,7 @@ def get_live_quote(kite, symbols: list[str]) -> dict:
     Returns:
         Dict keyed by symbol with standardised quote data.
     """
-    kite_symbols = [f"NSE:{s}" for s in symbols]
+    kite_symbols = [_to_kite_symbol(s) for s in symbols]
 
     try:
         raw = kite.quote(kite_symbols)
@@ -121,7 +149,7 @@ def get_live_quote(kite, symbols: list[str]) -> dict:
 
     result = {}
     for symbol in symbols:
-        key = f"NSE:{symbol}"
+        key = _to_kite_symbol(symbol)
         if key not in raw:
             logger.warning("No quote data for %s", symbol)
             continue
@@ -137,7 +165,7 @@ def get_live_quote(kite, symbols: list[str]) -> dict:
             "change_pct": round(
                 ((q["last_price"] - q["ohlc"]["close"]) / q["ohlc"]["close"]) * 100, 2
             ) if q["ohlc"]["close"] else 0,
-            "timestamp": datetime.now(),
+            "timestamp": datetime.now(IST),
         }
 
     return result
@@ -207,7 +235,7 @@ def get_vwap(kite, symbol: str) -> float:
     """Calculate current VWAP from today's 1-minute candles."""
     df = get_ohlcv(kite, symbol, interval="minute", days=1)
 
-    today = datetime.now().date()
+    today = datetime.now(IST).date()
     df = df[df["timestamp"].dt.date == today]
 
     if df.empty:

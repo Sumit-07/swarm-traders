@@ -27,6 +27,7 @@ class TelegramBot:
         self.redis = redis_store
         self._app = None
         self._running = False
+        self._loop = None
         self._stub_mode = not token
 
         if self._stub_mode:
@@ -89,9 +90,9 @@ class TelegramBot:
 
     def _run_polling(self):
         """Run the bot polling loop in a separate thread."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._async_polling())
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._async_polling())
 
     async def _async_polling(self):
         """Async polling loop that doesn't register signal handlers."""
@@ -113,15 +114,21 @@ class TelegramBot:
 
         try:
             import asyncio
-            loop = asyncio.new_event_loop()
 
             async def _send():
                 await self._app.bot.send_message(
                     chat_id=self.chat_id, text=text,
                 )
 
-            loop.run_until_complete(_send())
-            loop.close()
+            if self._loop and self._loop.is_running():
+                # Schedule on the bot's own event loop (thread-safe)
+                future = asyncio.run_coroutine_threadsafe(_send(), self._loop)
+                future.result(timeout=10)
+            else:
+                # Fallback: create a new loop (e.g. during startup)
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(_send())
+                loop.close()
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             logger.info(f"[TELEGRAM FALLBACK] {text}")

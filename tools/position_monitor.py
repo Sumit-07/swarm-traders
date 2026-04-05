@@ -8,6 +8,9 @@ Runs periodically to:
 """
 
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from tools.logger import get_agent_logger
 
@@ -114,7 +117,7 @@ class PositionMonitor:
             try:
                 price = get_price_fn(pos["symbol"])
                 fill, reason = self.simulator.check_exits(
-                    pos, current_price=price, current_time=datetime.now(),
+                    pos, current_price=price, current_time=datetime.now(IST),
                 )
                 if fill:
                     result = self.simulator.close_position(

@@ -5,6 +5,9 @@ Position sizing is the most important variable in trading.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import (
@@ -85,7 +88,7 @@ class RiskAgent(BaseAgent):
         checks["max_positions"] = open_count < max_pos
 
         # Check 4: Not in cooldown
-        if self._cooldown_until and datetime.now() < self._cooldown_until:
+        if self._cooldown_until and datetime.now(IST) < self._cooldown_until:
             self._in_cooldown = True
         else:
             self._in_cooldown = False
@@ -204,7 +207,7 @@ class RiskAgent(BaseAgent):
         if self._consecutive_losses >= RISK_LIMITS["consecutive_loss_cooldown"]:
             from datetime import timedelta
             self._in_cooldown = True
-            self._cooldown_until = datetime.now() + timedelta(
+            self._cooldown_until = datetime.now(IST) + timedelta(
                 minutes=RISK_LIMITS["cooldown_duration_minutes"]
             )
             self.logger.warning(

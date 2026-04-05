@@ -6,6 +6,9 @@ Disciplined and precise — follows the config exactly.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import (
@@ -139,7 +142,7 @@ class AnalystAgent(BaseAgent):
                 "day_high": "N/A",
                 "nifty_direction": nifty.get("change", "N/A"),
                 "nifty_change": "N/A",
-                "signal_time": datetime.now().strftime("%H:%M IST"),
+                "signal_time": datetime.now(IST).strftime("%H:%M IST"),
                 "minutes_open": "N/A",
                 "stock_news": "None",
             })

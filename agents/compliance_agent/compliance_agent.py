@@ -5,6 +5,9 @@ The agent that would survive a regulatory review.
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority
@@ -70,7 +73,7 @@ class ComplianceAgent(BaseAgent):
             "details": details,
             "severity": severity,
             "responsible_agent": agent,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(IST).isoformat(),
         }
         self._violations.append(violation)
         self.logger.warning(f"VIOLATION: {rule} — {details}")
@@ -87,7 +90,7 @@ class ComplianceAgent(BaseAgent):
     def _run_eod_audit(self):
         """Run end-of-day compliance audit using rule checks + LLM analysis."""
         import json
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = datetime.now(IST).strftime("%Y-%m-%d")
         trades = self.sqlite.get_trades(date=today)
 
         # Reset violations for fresh audit
@@ -150,7 +153,7 @@ class ComplianceAgent(BaseAgent):
                 100 if not self._violations
                 else max(0, 100 - len(self._violations) * 20)
             )
-            notes = f"Rule-based audit only (LLM unavailable). {datetime.now().isoformat()}"
+            notes = f"Rule-based audit only (LLM unavailable). {datetime.now(IST).isoformat()}"
 
         # Compile audit report
         audit_report = {
