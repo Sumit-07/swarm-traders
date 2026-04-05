@@ -341,7 +341,11 @@ class OrchestratorAgent(BaseAgent):
         mode = self._get_system_mode()
         status = f"System Mode: {mode}\nAgent Status:\n"
         for aid, info in agents.items():
-            status += f"  {aid}: {info.get('state', 'UNKNOWN')}\n"
+            if isinstance(info, dict):
+                state = info.get("state", "UNKNOWN")
+            else:
+                state = str(info)
+            status += f"  {aid}: {state}\n"
         if self.telegram:
             self.telegram.send_message(status)
 
