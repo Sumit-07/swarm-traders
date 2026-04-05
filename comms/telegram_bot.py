@@ -91,7 +91,19 @@ class TelegramBot:
         """Run the bot polling loop in a separate thread."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        self._app.run_polling()
+        loop.run_until_complete(self._async_polling())
+
+    async def _async_polling(self):
+        """Async polling loop that doesn't register signal handlers."""
+        await self._app.initialize()
+        await self._app.start()
+        await self._app.updater.start_polling()
+        # Block until stop() is called
+        self._stop_event = asyncio.Event()
+        await self._stop_event.wait()
+        await self._app.updater.stop()
+        await self._app.stop()
+        await self._app.shutdown()
 
     def send_message(self, text: str):
         """Send a message to the configured chat."""
@@ -117,16 +129,16 @@ class TelegramBot:
     def send_auth_request(self, message: str, url: str, button_text: str) -> None:
         """Send a Telegram message with an inline button that opens a URL.
 
-        Used specifically for Fyers OAuth authentication.
+        Used for broker OAuth authentication (Kite Connect).
 
         Args:
             message: Text message to display above the button
-            url: URL the button opens (Fyers auth URL)
+            url: URL the button opens (broker auth URL)
             button_text: Label shown on the button
         """
         if self._stub_mode:
             logger.info(f"[TELEGRAM] {message}")
-            print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
+            print(f"[AUTH URL — open this in your browser]\n{url}")
             return
 
         try:
@@ -154,10 +166,10 @@ class TelegramBot:
                     f"Telegram send_auth_request failed: {response.status_code} "
                     f"{response.text}"
                 )
-                print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
+                print(f"[AUTH URL — open this in your browser]\n{url}")
         except Exception as e:
             logger.error(f"Failed to send auth request via Telegram: {e}")
-            print(f"[FYERS AUTH URL — open this in your browser]\n{url}")
+            print(f"[AUTH URL — open this in your browser]\n{url}")
 
     def send_approval_request(self, proposal: dict):
         """Send a trade proposal requiring approval."""
