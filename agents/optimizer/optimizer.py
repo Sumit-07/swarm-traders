@@ -18,6 +18,9 @@ class OptimizerAgent(BaseAgent):
     def on_start(self):
         self.logger.info("Optimizer agent started. Waiting for 3:50 PM trigger.")
 
+    def on_stop(self):
+        pass
+
     def on_message(self, message: AgentMessage):
         # Optimizer doesn't process incoming messages — meeting is graph-driven
         self.logger.debug(
