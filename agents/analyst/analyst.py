@@ -28,6 +28,7 @@ class AnalystAgent(BaseAgent):
         super().__init__("analyst", redis_store, sqlite_store)
         self._strategy_config: dict | None = None
         self._pending_signals: dict = {}  # proposal_id -> timestamp
+        self._signal_payloads: dict = {}  # proposal_id -> full proposal dict
 
     def on_start(self):
         self.logger.info("Analyst ready for signal generation")
@@ -66,6 +67,7 @@ class AnalystAgent(BaseAgent):
             # Risk agent decision — clear pending signal
             proposal_id = message.payload.get("proposal_id")
             self._pending_signals.pop(proposal_id, None)
+            self._signal_payloads.pop(proposal_id, None)
             self.logger.debug(
                 f"Proposal {proposal_id} resolved ({message.payload.get('decision')}), "
                 f"pending: {len(self._pending_signals)}"
@@ -79,6 +81,7 @@ class AnalystAgent(BaseAgent):
         for pid in stale:
             self.logger.warning(f"Clearing stale pending signal {pid} (>2 min)")
             self._pending_signals.pop(pid)
+            self._signal_payloads.pop(pid, None)
 
         # Block intraday strategies after no_new_trades cutoff
         strategy_name = (self._strategy_config or {}).get("strategy_name", "")
@@ -424,12 +427,14 @@ class AnalystAgent(BaseAgent):
             analyst_note=note,
         )
 
+        proposal_data = proposal.model_dump()
         self._pending_signals[proposal.proposal_id] = _time.time()
+        self._signal_payloads[proposal.proposal_id] = proposal_data
 
         self.send_message(
             to_agent="risk_agent",
             msg_type=MessageType.SIGNAL,
-            payload=proposal.model_dump(),
+            payload=proposal_data,
             priority=Priority.HIGH,
             requires_response=True,
         )
@@ -467,5 +472,5 @@ class AnalystAgent(BaseAgent):
                 "bucket": "conservative",
             }
         self._scan_watchlist()
-        state["pending_signals"] = list(self._pending_signals)
+        state["pending_signals"] = list(self._signal_payloads.values())
         return state

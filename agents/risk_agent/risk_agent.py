@@ -44,10 +44,10 @@ class RiskAgent(BaseAgent):
                 self._consecutive_losses = 0
 
     def _review_trade_proposal(self, message: AgentMessage):
-        """Review a trade proposal against 5 risk checks.
+        """Review a trade proposal against 5 risk checks (message-driven path).
 
-        Phase 2: pure Python rule checks.
-        Phase 4: will use LLM with PROMPT_TRADE_REVIEW for edge cases.
+        Uses shared _review_proposal_data for the checks, then adds LLM review
+        and sends messages to orchestrator and analyst.
         """
         proposal = message.payload
         symbol = proposal.get("symbol", "")
@@ -56,100 +56,37 @@ class RiskAgent(BaseAgent):
         quantity = proposal.get("quantity_suggested", 1)
         bucket = proposal.get("bucket", "conservative")
 
-        # Determine capital base
+        # Run the 5 rule checks
+        decision_payload = self._review_proposal_data(proposal)
+        checks = decision_payload.get("checks", {})
+        all_passed = decision_payload["decision"] == "APPROVED"
+
+        # Enhance with LLM review (message path only — graph path skips for speed)
         if bucket == "risk":
             capital = CAPITAL["risk_bucket_monthly"]
         else:
             capital = CAPITAL["conservative_bucket"]
-
-        # Calculate risk
         risk_per_share = abs(entry_price - stop_loss)
         capital_at_risk = risk_per_share * quantity
         risk_pct = capital_at_risk / capital if capital > 0 else 1.0
-
-        # --- 5 Risk Checks ---
-        checks = {}
-
-        # Check 1: Single trade risk <= 2%
-        max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
-        checks["single_trade_risk"] = capital_at_risk <= max_risk
-
-        # Check 2: Daily loss budget available
         max_daily_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
         remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
-        checks["daily_loss_budget"] = remaining_budget > capital_at_risk
 
-        # Check 3: Not exceeding max positions (counted per bucket)
-        positions = self.redis.get_state("state:positions") or {}
-        open_count = len([p for p in positions.get("positions", [])
-                         if p.get("status") == "OPEN"
-                         and p.get("bucket", "conservative") == bucket])
-        max_pos = (RISK_LIMITS["max_risk_positions"] if bucket == "risk"
-                   else RISK_LIMITS["max_simultaneous_positions"])
-        checks["max_positions"] = open_count < max_pos
-
-        # Check 4: Not in cooldown
-        if self._cooldown_until and datetime.now(IST) < self._cooldown_until:
-            self._in_cooldown = True
-        else:
-            self._in_cooldown = False
-            self._cooldown_until = None
-        checks["not_in_cooldown"] = not self._in_cooldown
-
-        # Check 5: Stop-loss is logical (not too tight or too wide)
-        atr_reasonable = risk_per_share > 0 and risk_pct < 0.05
-        checks["stop_loss_logical"] = atr_reasonable
-
-        # --- Decision ---
-        all_passed = all(checks.values())
-
-        # Calculate proper position size
-        if all_passed and risk_per_share > 0:
-            approved_size = int(max_risk / risk_per_share)
-            approved_size = max(1, min(approved_size, quantity))
-        else:
-            approved_size = 0
-
-        # Find the failing check
-        failing_check = None
-        if not all_passed:
-            for check_name, passed in checks.items():
-                if not passed:
-                    failing_check = check_name
-                    break
-
-        # Use LLM for nuanced review (enhances but never overrides rule checks)
         llm_review = self._llm_trade_review(
             proposal, checks, capital_at_risk, risk_pct, remaining_budget
         )
-
-        # LLM can flag for human attention but cannot approve a failed rule check
         flag_human = risk_pct > 0.015 or llm_review.get("flag_human", False)
 
-        decision = RiskDecision(
-            proposal_id=proposal.get("proposal_id", ""),
-            decision="APPROVED" if all_passed else "REJECTED",
-            reason=(
-                llm_review.get("reason", f"All 5 checks passed. Risk: {risk_pct:.1%}")
-                if all_passed
-                else f"Failed check: {failing_check}"
-            ),
-            approved_position_size=approved_size,
-            approved_stop_loss=llm_review.get("approved_stop_loss", stop_loss),
-            approved_target=llm_review.get("approved_target", proposal.get("target", 0)),
-            risk_pct_final=risk_pct,
-            flag_human=flag_human,
-        )
+        # Override reason and SL/target with LLM suggestions if available
+        if all_passed and llm_review.get("reason"):
+            decision_payload["reason"] = llm_review["reason"]
+        if llm_review.get("approved_stop_loss"):
+            decision_payload["approved_stop_loss"] = llm_review["approved_stop_loss"]
+        if llm_review.get("approved_target"):
+            decision_payload["approved_target"] = llm_review["approved_target"]
+        decision_payload["flag_human"] = flag_human
 
         # Send decision to orchestrator
-        decision_payload = {
-            **decision.model_dump(),
-            "symbol": symbol,
-            "entry_price": entry_price,
-            "bucket": bucket,
-            "transaction_type": "BUY" if proposal.get("direction") == "LONG" else "SELL",
-            "checks": checks,
-        }
         self.send_message(
             to_agent="orchestrator",
             msg_type=MessageType.SIGNAL,
@@ -164,20 +101,10 @@ class RiskAgent(BaseAgent):
             msg_type=MessageType.RESPONSE,
             payload={
                 "proposal_id": proposal.get("proposal_id", ""),
-                "decision": decision.decision,
+                "decision": decision_payload["decision"],
             },
             priority=Priority.NORMAL,
         )
-
-        if all_passed:
-            self.logger.info(
-                f"APPROVED {symbol}: risk={risk_pct:.1%}, size={approved_size}"
-            )
-        else:
-            self.logger.info(
-                f"REJECTED {symbol}: risk={risk_pct:.1%}, size={approved_size}, "
-                f"failed={failing_check}, checks={checks}"
-            )
 
     def _llm_trade_review(self, proposal: dict, checks: dict,
                           capital_at_risk: float, risk_pct: float,
@@ -244,12 +171,121 @@ class RiskAgent(BaseAgent):
                 priority=Priority.HIGH,
             )
 
-    def run(self, state: dict) -> dict:
-        """LangGraph node: review pending signals."""
-        # In graph mode, signals come through state rather than messages
-        pending = state.get("pending_signals", [])
-        state["approved_orders"] = []
-        state["rejected_proposals"] = []
+    def _review_proposal_data(self, proposal: dict) -> dict:
+        """Review a trade proposal dict through 5 risk checks.
 
-        self.logger.info(f"Reviewing {len(pending)} pending signals")
+        Shared logic used by both on_message() and run() paths.
+        Returns the full decision payload.
+        """
+        symbol = proposal.get("symbol", "")
+        entry_price = proposal.get("entry_price", 0)
+        stop_loss = proposal.get("stop_loss", 0)
+        quantity = proposal.get("quantity_suggested", 1)
+        bucket = proposal.get("bucket", "conservative")
+
+        if bucket == "risk":
+            capital = CAPITAL["risk_bucket_monthly"]
+        else:
+            capital = CAPITAL["conservative_bucket"]
+
+        risk_per_share = abs(entry_price - stop_loss)
+        capital_at_risk = risk_per_share * quantity
+        risk_pct = capital_at_risk / capital if capital > 0 else 1.0
+
+        checks = {}
+        max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
+        checks["single_trade_risk"] = capital_at_risk <= max_risk
+
+        max_daily_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
+        remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
+        checks["daily_loss_budget"] = remaining_budget > capital_at_risk
+
+        positions = self.redis.get_state("state:positions") or {}
+        open_count = len([p for p in positions.get("positions", [])
+                         if p.get("status") == "OPEN"
+                         and p.get("bucket", "conservative") == bucket])
+        max_pos = (RISK_LIMITS["max_risk_positions"] if bucket == "risk"
+                   else RISK_LIMITS["max_simultaneous_positions"])
+        checks["max_positions"] = open_count < max_pos
+
+        if self._cooldown_until and datetime.now(IST) < self._cooldown_until:
+            self._in_cooldown = True
+        else:
+            self._in_cooldown = False
+            self._cooldown_until = None
+        checks["not_in_cooldown"] = not self._in_cooldown
+
+        atr_reasonable = risk_per_share > 0 and risk_pct < 0.05
+        checks["stop_loss_logical"] = atr_reasonable
+
+        all_passed = all(checks.values())
+
+        if all_passed and risk_per_share > 0:
+            approved_size = int(max_risk / risk_per_share)
+            approved_size = max(1, min(approved_size, quantity))
+        else:
+            approved_size = 0
+
+        failing_check = None
+        if not all_passed:
+            for check_name, passed in checks.items():
+                if not passed:
+                    failing_check = check_name
+                    break
+
+        decision = RiskDecision(
+            proposal_id=proposal.get("proposal_id", ""),
+            decision="APPROVED" if all_passed else "REJECTED",
+            reason=(
+                f"All 5 checks passed. Risk: {risk_pct:.1%}"
+                if all_passed
+                else f"Failed check: {failing_check}"
+            ),
+            approved_position_size=approved_size,
+            approved_stop_loss=stop_loss,
+            approved_target=proposal.get("target", 0),
+            risk_pct_final=risk_pct,
+            flag_human=risk_pct > 0.015,
+        )
+
+        decision_payload = {
+            **decision.model_dump(),
+            "symbol": symbol,
+            "entry_price": entry_price,
+            "bucket": bucket,
+            "transaction_type": "BUY" if proposal.get("direction") == "LONG" else "SELL",
+            "checks": checks,
+        }
+
+        if all_passed:
+            self.logger.info(
+                f"APPROVED {symbol}: risk={risk_pct:.1%}, size={approved_size}"
+            )
+        else:
+            self.logger.info(
+                f"REJECTED {symbol}: risk={risk_pct:.1%}, size={approved_size}, "
+                f"failed={failing_check}, checks={checks}"
+            )
+
+        return decision_payload
+
+    def run(self, state: dict) -> dict:
+        """LangGraph node: review pending signals through 5 risk checks."""
+        pending = state.get("pending_signals", [])
+        approved = []
+        rejected = []
+
+        self.logger.info(f"Reviewing {len(pending)} pending signals (graph mode)")
+
+        for signal in pending:
+            if not isinstance(signal, dict):
+                continue
+            decision_payload = self._review_proposal_data(signal)
+            if decision_payload["decision"] == "APPROVED":
+                approved.append(decision_payload)
+            else:
+                rejected.append(decision_payload)
+
+        state["approved_orders"] = approved
+        state["rejected_proposals"] = rejected
         return state

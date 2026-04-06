@@ -390,19 +390,53 @@ class SwarmScheduler:
             logger.error(f"Position monitor failed: {e}")
 
     def _run_force_close(self):
-        """15:20 — Force close all intraday positions."""
-        logger.info("Force close check")
-        graph = self.graphs.get("force_close")
-        if not graph:
+        """15:20 — Force close all intraday positions.
+
+        Bypasses the graph and calls PositionMonitor.force_close_all() directly,
+        since the graph path agents don't have force-close logic in their run() methods.
+        """
+        logger.info("Force close — closing all intraday positions")
+
+        orchestrator = self.agents.get("orchestrator")
+        execution = self.agents.get("execution_agent")
+        if not orchestrator:
+            logger.error("Force close: orchestrator not found")
             return
 
-        state = {**self._initial_state}
-        state["current_phase"] = "MARKET_CLOSE"
+        from tools.position_monitor import PositionMonitor
+        from tools.market_data import get_live_quote
+
+        broker = getattr(orchestrator, "broker", None)
+        simulator = getattr(execution, "simulator", None) if execution else None
+
+        monitor = PositionMonitor(
+            redis_store=orchestrator.redis,
+            sqlite_store=orchestrator.sqlite,
+            broker=broker,
+            simulator=simulator,
+        )
+
+        def get_price_fn(symbol: str) -> float:
+            """Fetch LTP for a symbol using market data provider."""
+            try:
+                quotes = get_live_quote([symbol])
+                return quotes.get(symbol, {}).get("ltp", 0)
+            except Exception as e:
+                logger.error(f"Failed to get price for {symbol}: {e}")
+                return 0
 
         try:
-            graph.invoke(state)
+            closed = monitor.force_close_all(get_price_fn=get_price_fn)
+            logger.info(f"Force close complete: {len(closed)} positions closed")
+            if self.telegram and closed:
+                symbols = ", ".join(c.get("symbol", "?") for c in closed)
+                self.telegram.send_message(
+                    f"EOD Force Close: {len(closed)} position(s) closed\n{symbols}"
+                )
         except Exception as e:
             logger.error(f"Force close failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"ALERT: Force close failed — {e}")
 
     def _run_eod_graph(self):
         """15:30 — Run end-of-day review graph."""

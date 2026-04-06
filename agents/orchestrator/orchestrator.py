@@ -891,5 +891,53 @@ class OrchestratorAgent(BaseAgent):
             self.generate_morning_briefing(state)
         elif phase == "eod_review":
             self.generate_eod_summary(state)
+        elif phase in ("MARKET_OPEN", "MARKET_CLOSE"):
+            # Convert approved risk decisions to executable orders
+            approved = state.get("approved_orders", [])
+            executable = []
+            for risk_approval in approved:
+                bucket = risk_approval.get("bucket", "conservative")
+
+                # Risk bucket trades need human approval (handled outside graph)
+                if bucket == "risk":
+                    proposal_id = risk_approval.get("proposal_id", "")
+                    self._human_approval_pending[proposal_id] = risk_approval
+                    self.logger.info(f"Risk trade {proposal_id} queued for human approval")
+                    if self.telegram:
+                        self.telegram.send_approval_request({
+                            "symbol": risk_approval.get("symbol", ""),
+                            "direction": risk_approval.get("transaction_type", "BUY"),
+                            "entry_price": risk_approval.get("entry_price", 0),
+                            "stop_loss": risk_approval.get("approved_stop_loss", 0),
+                            "target": risk_approval.get("approved_target", 0),
+                            "quantity": risk_approval.get("approved_position_size", 0),
+                            "bucket": "risk",
+                            "confidence": risk_approval.get("confidence", ""),
+                            "note": f"Proposal ID: {proposal_id}",
+                        })
+                    continue
+
+                active_strategy = self.redis.get_state("state:active_strategy") or {}
+                order = ApprovedOrder(
+                    proposal_id=risk_approval.get("proposal_id", ""),
+                    symbol=risk_approval.get("symbol", ""),
+                    transaction_type=risk_approval.get("transaction_type", "BUY"),
+                    quantity=risk_approval.get("approved_position_size", 0),
+                    order_type="LIMIT",
+                    price=risk_approval.get("entry_price", 0),
+                    stop_loss_price=risk_approval.get("approved_stop_loss", 0),
+                    target_price=risk_approval.get("approved_target", 0),
+                    bucket=risk_approval.get("bucket", "conservative"),
+                    strategy=active_strategy.get("strategy", ""),
+                    mode=self._get_system_mode(),
+                    approved_by="risk_agent",
+                )
+                executable.append(order.model_dump())
+                self.logger.info(
+                    f"Order prepared: {order.symbol} {order.transaction_type} "
+                    f"{order.quantity}x @ {order.price}"
+                )
+
+            state["approved_orders"] = executable
 
         return state

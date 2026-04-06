@@ -35,6 +35,7 @@ def _make_analyst_with_strategy(strategy_name, direction="BOTH", **overrides):
         "entry_conditions": {"direction": direction, **overrides},
         "exit_conditions": {},
     }
+    agent._signal_payloads = {}
     return agent
 
 
