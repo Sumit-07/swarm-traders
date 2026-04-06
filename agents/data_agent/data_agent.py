@@ -14,6 +14,7 @@ from agents.message import AgentMessage, MessageType, Priority
 from config import DEFAULT_WATCHLIST
 from tools.market_data import MarketDataProvider
 from tools.indicators import calculate_all
+from tools.news_fetcher import fetch_market_news
 
 
 class DataAgent(BaseAgent):
@@ -38,7 +39,11 @@ class DataAgent(BaseAgent):
             self.pull_watchlist_data, "interval", minutes=5,
             id="watchlist_data", replace_existing=True,
         )
-        self.logger.info("Data Agent scheduled: snapshot every 1 min, watchlist every 5 min")
+        self.scheduler.add_job(
+            self.pull_news, "cron", hour="8-15", minute=0,
+            timezone=IST, id="news_pull", replace_existing=True,
+        )
+        self.logger.info("Data Agent scheduled: snapshot 1m, watchlist 5m, news hourly 8-15 IST")
 
     def on_stop(self):
         pass
@@ -53,6 +58,8 @@ class DataAgent(BaseAgent):
                 self.logger.info(f"Watchlist updated: {self._watchlist}")
             elif request == "get_ohlcv":
                 self._handle_ohlcv_request(message)
+            elif request == "news_summary":
+                self.pull_news()
         elif message.type == MessageType.COMMAND:
             if message.payload.get("command") == "HALT":
                 self.logger.info("Data Agent acknowledges HALT")
@@ -142,26 +149,26 @@ class DataAgent(BaseAgent):
                 correlation_id=message.message_id,
             )
 
-    def summarize_news(self, headlines: list[str]) -> dict:
-        """Use LLM to summarize news headlines into market sentiment."""
-        if not headlines:
-            return {"overall_sentiment": "NEUTRAL", "key_events": [],
-                    "risk_events_today": []}
-        try:
-            result = self.call_llm("PROMPT_NEWS_SUMMARY", {
-                "current_time": datetime.now(IST).strftime("%H:%M IST"),
-                "headlines_list": "\n".join(
-                    f"- {h}" for h in headlines[:15]
-                ),
-            })
-            return result
-        except Exception as e:
-            self.logger.error(f"News summary LLM failed: {e}")
-            return {"overall_sentiment": "UNKNOWN", "_error": str(e)}
+    def pull_news(self):
+        """Fetch market news via Gemini search grounding and store in Redis."""
+        now = datetime.now(IST)
+        result = fetch_market_news(
+            current_time=now.strftime("%H:%M"),
+            current_date=now.strftime("%Y-%m-%d"),
+        )
+        result["fetched_at"] = now.isoformat()
+        self.redis.set_market_data("data:news_summary", result, ttl=3600)
+        sentiment = result.get("overall_sentiment", "UNKNOWN")
+        headline_count = len(result.get("headlines", []))
+        self.logger.info(
+            f"News saved to Redis: {headline_count} headlines, sentiment={sentiment}"
+        )
+        self._last_action = f"pulled news: {sentiment}"
 
     def run(self, state: dict) -> dict:
         """LangGraph node: refresh market data."""
         self.pull_market_snapshot()
+        self.pull_news()
 
         # Set watchlist from strategy if available, fall back to defaults
         strategy = state.get("conservative_strategy") or {}

@@ -1,30 +1,164 @@
-"""News and sentiment data fetcher.
+"""News fetcher — uses Gemini with Google Search grounding.
 
-Fetches market news headlines from available sources.
+Instead of a separate news API, we ask Gemini to search the web for
+the latest Indian market news and return structured results. This
+gives us real-time headlines with zero extra API keys.
 """
 
+import json
+import re
+
+from config import GOOGLE_API_KEY
 from tools.logger import get_agent_logger
 
 logger = get_agent_logger("news_fetcher")
 
+MARKET_NEWS_PROMPT = """\
+You are a financial news researcher for an Indian stock market trading system.
+Your job is to search for and compile the most recent market-moving news.
 
-class NewsFetcher:
-    def get_headlines(self, count: int = 15) -> list[dict]:
-        """Get recent market news headlines.
+Current time: {current_time} IST, Date: {current_date}
 
-        Returns: [{"title": str, "source": str, "timestamp": str, "url": str}]
-        """
+Search the web and compile the latest news relevant to Indian stock markets.
+Cover ALL of the following categories — skip a category only if there is
+genuinely nothing relevant in the last 12 hours:
+
+1. **Indian Market News**
+   - Nifty 50 / Sensex movement and outlook
+   - Sector-specific moves (banking, IT, pharma, metals, auto)
+   - FII/DII flow data for today or yesterday
+   - RBI policy, government announcements affecting markets
+   - Major corporate earnings, results, or guidance updates
+
+2. **Global Cues**
+   - US markets (S&P 500, Nasdaq, Dow) — last close and futures
+   - Asian markets (Nikkei, Hang Seng, SGX Nifty) — current status
+   - Crude oil price and direction
+   - US Dollar index (DXY) and USD/INR movement
+   - Any geopolitical events affecting global risk appetite
+
+3. **Risk Events (next 24 hours)**
+   - Scheduled economic data releases (India or US)
+   - Central bank meetings or speeches (RBI, Fed)
+   - Major earnings announcements today/tomorrow
+   - Options expiry or settlement dates
+   - Any political or geopolitical developments
+
+4. **Market Sentiment Indicators**
+   - India VIX level and direction
+   - Put-call ratio if available
+   - Any unusual volume or block deals
+
+IMPORTANT RULES:
+- Only include FACTUAL, VERIFIED information from your search results
+- Include the source name for each piece of news
+- If you cannot find information for a category, say "No significant updates"
+- Do NOT make predictions or give trading advice
+- Focus on the last 12-24 hours of news
+- For numbers (index levels, percentages), be precise
+
+Respond in this exact JSON format:
+{{
+  "headlines": [
+    {{"title": "headline text", "source": "source name", "category": "DOMESTIC|GLOBAL|EARNINGS|POLICY|RISK", "impact": "POSITIVE|NEGATIVE|NEUTRAL"}},
+  ],
+  "global_cues": {{
+    "us_markets": "S&P/Nasdaq last close summary",
+    "asian_markets": "current Asian market status",
+    "crude_oil": "price and direction",
+    "dxy_usdinr": "dollar index and rupee status"
+  }},
+  "risk_events_next_24h": [
+    "event description with time if known"
+  ],
+  "fii_dii_flow": "FII/DII data if available, else 'Not available'",
+  "india_vix": "VIX level and direction if available",
+  "overall_sentiment": "BULLISH | BEARISH | NEUTRAL | MIXED",
+  "one_line_summary": "Single sentence capturing the most important market theme right now"
+}}
+"""
+
+
+def fetch_market_news(current_time: str, current_date: str) -> dict:
+    """Fetch latest market news using Gemini with Google Search grounding.
+
+    Returns structured news dict or error fallback.
+    """
+    if not GOOGLE_API_KEY:
+        logger.warning("GOOGLE_API_KEY not set — news fetch disabled")
+        return _empty_result("API key not configured")
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GOOGLE_API_KEY)
+
+        prompt = MARKET_NEWS_PROMPT.format(
+            current_time=current_time,
+            current_date=current_date,
+        )
+
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.2,
+                max_output_tokens=2048,
+            ),
+        )
+
+        raw_text = response.text
+        logger.info(f"News fetch complete — response length: {len(raw_text)}")
+
+        return _parse_news_response(raw_text)
+
+    except ImportError:
+        logger.error("google-genai package not installed — pip install google-genai")
+        return _empty_result("google-genai not installed")
+    except Exception as e:
+        logger.error(f"News fetch failed: {e}")
+        return _empty_result(str(e))
+
+
+def _parse_news_response(text: str) -> dict:
+    """Parse Gemini's JSON response, handling common LLM quirks."""
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try extracting from code fences
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fence_match:
         try:
-            return self._fetch_headlines(count)
-        except Exception as e:
-            logger.error(f"Failed to fetch news headlines: {e}")
-            return []
+            return json.loads(fence_match.group(1))
+        except json.JSONDecodeError:
+            pass
 
-    def _fetch_headlines(self, count: int) -> list[dict]:
-        """Fetch headlines from available sources.
+    # Try finding first { ... } block
+    brace_match = re.search(r"\{[\s\S]*\}", text)
+    if brace_match:
+        try:
+            return json.loads(brace_match.group(0))
+        except json.JSONDecodeError:
+            pass
 
-        TODO: Implement with NewsAPI or Google News RSS.
-        For Phase 1, returns empty list.
-        """
-        logger.warning("News fetch not yet implemented, returning empty")
-        return []
+    logger.warning(f"Failed to parse news JSON: {text[:200]}")
+    return {"_raw": text, "_parse_error": True,
+            "overall_sentiment": "UNKNOWN", "headlines": []}
+
+
+def _empty_result(reason: str) -> dict:
+    """Return a safe empty news result."""
+    return {
+        "headlines": [],
+        "global_cues": {},
+        "risk_events_next_24h": [],
+        "fii_dii_flow": "Not available",
+        "india_vix": "Not available",
+        "overall_sentiment": "UNKNOWN",
+        "one_line_summary": f"News unavailable: {reason}",
+    }

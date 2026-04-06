@@ -58,6 +58,26 @@ class StrategistAgent(BaseAgent):
             f"VIX={vix_data.get('ltp', 'N/A')}"
         )
 
+        # Pull news summary from Redis (populated by data agent)
+        news = self.redis.get_market_data("data:news_summary") or {}
+        global_cues = news.get("global_cues", {})
+        global_summary = (
+            f"US: {global_cues.get('us_markets', 'N/A')} | "
+            f"Asia: {global_cues.get('asian_markets', 'N/A')} | "
+            f"Crude: {global_cues.get('crude_oil', 'N/A')} | "
+            f"DXY/INR: {global_cues.get('dxy_usdinr', 'N/A')}"
+        ) if global_cues else "No data"
+
+        risk_events = news.get("risk_events_next_24h", [])
+        economic_events = "\n".join(f"- {e}" for e in risk_events) if risk_events else "None"
+
+        fii_dii = news.get("fii_dii_flow", "N/A")
+
+        self.logger.info(
+            f"News for strategy: sentiment={news.get('overall_sentiment', 'N/A')}, "
+            f"headlines={len(news.get('headlines', []))}"
+        )
+
         variables = {
             "capital": CAPITAL["conservative_bucket"],
             "trend_direction": nifty.get("change", "unknown"),
@@ -66,10 +86,10 @@ class StrategistAgent(BaseAgent):
             "banknifty_close": market.get("banknifty", {}).get("ltp", "N/A"),
             "vix_current": vix_data.get("ltp", 15),
             "vix_avg": "N/A",
-            "fii_3day": "N/A",
-            "global_summary": data.get("global_summary", "No data"),
+            "fii_3day": fii_dii,
+            "global_summary": global_summary,
             "sgx_nifty": "N/A",
-            "economic_events": data.get("economic_events", "None"),
+            "economic_events": economic_events,
             "available_capital": CAPITAL["conservative_bucket"],
             "swing_positions": 0,
             "yesterday_pnl": data.get("yesterday_pnl", 0),
