@@ -60,6 +60,7 @@ class TelegramBot:
                 "agents": self._cmd_agents,
                 "authenticate": self._cmd_authenticate,
                 "optimizer": self._cmd_optimizer,
+                "catchup": self._cmd_catchup,
             }
             for cmd_name, handler in commands.items():
                 self._app.add_handler(CommandHandler(cmd_name, handler))
@@ -278,6 +279,13 @@ class TelegramBot:
             "Optimizer meeting requested. Guards will be checked."
         )
 
+    async def _cmd_catchup(self, update, context):
+        self._publish_command("CATCHUP")
+        await update.message.reply_text(
+            "Catchup started: auth → wake agents → morning strategy. "
+            "Signal loop will resume on next 5-min tick."
+        )
+
     async def _handle_text(self, update, context):
         """Handle plain text responses (YES/NO/EDIT)."""
         text = update.message.text.strip().upper()
@@ -287,5 +295,7 @@ class TelegramBot:
         else:
             await update.message.reply_text(
                 "Commands: /status /positions /halt /resume /pnl /strategy\n"
+                "/catchup — run full morning sequence manually\n"
+                "/authenticate — re-authenticate Kite\n"
                 "Or reply YES/NO/EDIT to pending proposals."
             )
