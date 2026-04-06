@@ -53,10 +53,9 @@ class StrategistAgent(BaseAgent):
         nifty = market.get("nifty", {})
 
         self.logger.info(
-            "Market data for strategy: Nifty=%s, BankNifty=%s, VIX=%s",
-            nifty.get("ltp", "N/A"),
-            market.get("banknifty", {}).get("ltp", "N/A"),
-            vix_data.get("ltp", "N/A"),
+            f"Market data for strategy: Nifty={nifty.get('ltp', 'N/A')}, "
+            f"BankNifty={market.get('banknifty', {}).get('ltp', 'N/A')}, "
+            f"VIX={vix_data.get('ltp', 'N/A')}"
         )
 
         variables = {
