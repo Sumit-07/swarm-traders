@@ -36,12 +36,15 @@ YOUR MORNING DECISION:
 WHAT ACTUALLY HAPPENED:
 - Actual market regime: {actual_regime}
 - Nifty: {nifty_move}% | VIX: {vix}
+- VIX at selection time: {vix_at_selection}
+- Was this a high-VIX strategy? {is_high_vix_strategy}
 - Strategy result: {strategy_result}
 - Trades taken: {trades_taken} | Won: {wins} | Lost: {losses}
 
 Answer these two questions only:
 1. Was your regime detection correct? If not, what signal did you miss?
 2. Would you make the same strategy selection again given the same morning data?
+   If a high-VIX strategy was used, was the VIX framework tier correct?
 
 Under 100 words. Specific. No filler.
 ```
@@ -180,7 +183,9 @@ Your job:
    plain text, no markdown — this goes directly to their phone).
 
 For each knowledge graph learning, output:
-{"agent_target": "strategist | risk_strategist | analyst | all", "category": "regime_detection | signal_quality | position_sizing | timing | risk_sizing", "regime": "trending | ranging | high_volatility | all", "applies_to": "intraday | swing | options | all", "learning": "specific actionable sentence", "confidence": 0.7}
+{"agent_target": "strategist | risk_strategist | analyst | all", "category": "regime_detection | signal_quality | position_sizing | timing | risk_sizing | high_vix_strategy", "regime": "trending | ranging | high_volatility | all", "applies_to": "intraday | swing | options | straddle | all", "learning": "specific actionable sentence", "confidence": 0.7}
+
+HIGH-VIX LEARNING TAGGING: If today involved a high-VIX strategy (STRADDLE_BUY or VOLATILITY_ADJUSTED_SWING), tag at least one learning with category "high_vix_strategy" and regime "high_volatility". Include the VIX level and whether the strategy performed as expected at that VIX level.
 
 Then output the Telegram message under a --- separator.
 

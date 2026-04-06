@@ -21,6 +21,10 @@ with broader context before raising to Risk Agent.
 ```
 A potential trade signal has been detected. Validate it.
 
+STRATEGY TYPE CHECK:
+- If the strategy is STRADDLE_BUY, use the STRADDLE signal validation rules below instead of the standard equity/options checks.
+- If the strategy is VOLATILITY_ADJUSTED_SWING, apply standard swing checks but verify the position size modifier (0.57×) and wider stop (3.5%).
+
 SIGNAL DETAILS:
 - Symbol: {symbol}
 - Signal type: {signal_type} (LONG | SHORT)
@@ -74,5 +78,50 @@ Respond in JSON:
   "invalidation_reason": null,
   "flags": [],
   "analyst_note": "RSI at 28.4 with volume 2.3x average — clean oversold entry, Nifty stable"
+}
+```
+
+---
+
+## PROMPT_STRADDLE_SIGNAL_VALIDATION
+### Purpose
+Called when strategy is STRADDLE_BUY to validate a straddle entry signal.
+
+### Template
+```
+A STRADDLE_BUY signal has been detected. Validate it.
+
+STRADDLE DETAILS:
+- Nifty spot: {nifty_spot}
+- Previous close: {prev_close}
+- Nifty move from open: {nifty_move_pct}%
+- ATM call premium: ₹{call_premium}
+- ATM put premium: ₹{put_premium}
+- Combined premium: ₹{combined_premium}
+- Break-even range: {lower_breakeven} – {upper_breakeven}
+- Move required for profit: {move_required_pct}%
+- India VIX: {vix}
+- IV percentile (30-day): {iv_percentile}%
+- Time: {signal_time} IST
+
+STRADDLE ENTRY RULES:
+1. VIX must be 22–32 ✓/✗
+2. Time must be 09:20–10:30 IST ✓/✗
+3. Nifty must not have moved > ±0.3% from previous close ✓/✗
+4. Combined premium cost must be ≤ ₹2,000 ✓/✗
+5. Move required for breakeven must be < 1.5% ✓/✗
+
+Is this a valid straddle entry?
+
+Respond in JSON:
+{
+  "signal_valid": true | false,
+  "confidence": "HIGH | MEDIUM | LOW",
+  "combined_entry_premium": 0.0,
+  "target_premium": 0.0,
+  "stop_premium": 0.0,
+  "invalidation_reason": "null or reason if invalid",
+  "flags": [],
+  "analyst_note": "one sentence summary"
 }
 ```

@@ -240,3 +240,37 @@ class DataLoader:
         if symbol in index_map:
             return index_map[symbol]
         return f"{symbol}.NS"
+
+
+def load_vix_data(start_date: str, end_date: str) -> pd.DataFrame:
+    """Download India VIX daily data via yfinance.
+
+    Args:
+        start_date: "YYYY-MM-DD"
+        end_date:   "YYYY-MM-DD"
+
+    Returns:
+        DataFrame with columns [datetime, vix] sorted by date ascending.
+    """
+    import yfinance as yf
+
+    logger.info(f"Downloading India VIX data: {start_date} to {end_date}")
+    df = yf.download("^INDIAVIX", start=start_date, end=end_date,
+                      interval="1d", progress=False)
+
+    if df.empty:
+        logger.warning("No VIX data returned")
+        return pd.DataFrame(columns=["datetime", "vix"])
+
+    df = df.reset_index()
+
+    # Handle MultiIndex columns from yfinance
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+
+    # Normalize
+    rename_map = {"Date": "datetime", "Close": "vix"}
+    df = df.rename(columns=rename_map)
+    df = df[["datetime", "vix"]]
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    return df.sort_values("datetime").reset_index(drop=True)

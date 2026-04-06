@@ -11,6 +11,11 @@ You never recommend strategies that require selling options or futures.
 
 You output a precise strategy configuration in JSON format that the Analyst Agent 
 will execute without further interpretation.
+
+VIX CONSTRAINT: The current VIX is {vix_current}. Apply the VIX framework:
+- VIX < 22: Select from strategies 1–5 (normal regime)
+- VIX 22–32: Select from strategies 1–6 (high-volatility regime — prefer strategy 6 VOLATILITY_ADJUSTED_SWING for swing setups)
+- VIX > 32: Always select NO_TRADE (extreme fear — capital preservation)
 ```
 
 ## PROMPT_MORNING_STRATEGY_SELECTION
@@ -64,8 +69,19 @@ STRATEGY LIBRARY:
    Instruments: Nifty weekly options only
    Holding: Same day or max 2 days
 
-6. NO_TRADE — Best when: regime is unclear, major event risk, VIX > 22,
+6. VOLATILITY_ADJUSTED_SWING — Best in: high-VIX regime (22–32), strong trend (ADX > 28), FII net buyers
+   Entry: Same as SWING_MOMENTUM but with wider stops (3.5% vs 2.5%) and reduced position size (0.57× normal)
+   Instruments: Nifty 50 large caps only
+   Holding: 2–5 days, wider trailing stop
+   Note: Only available when VIX is 22–32. Keeps rupee risk constant despite wider stops.
+
+7. NO_TRADE — Best when: regime is unclear, major event risk, VIX > 32,
    portfolio already fully deployed, or yesterday's loss > 3% of capital.
+
+VIX FRAMEWORK:
+- VIX < 22: Choose from strategies 1–5
+- VIX 22–32: Choose from strategies 1–6 (strategy 6 is designed for this regime)
+- VIX > 32: MUST select NO_TRADE (strategy 7)
 
 Select ONE strategy. If NO_TRADE, explain why in the rationale field.
 
