@@ -78,9 +78,56 @@ class OrchestratorAgent(BaseAgent):
         handler(message)
 
     def _handle_signal(self, message: AgentMessage):
-        """Handle trade signals — typically risk approval/rejection."""
-        if message.from_agent == "risk_agent":
+        """Handle trade signals — strategy proposals and risk decisions."""
+        if message.from_agent in ("strategist", "risk_strategist"):
+            self._handle_strategy_proposal(message)
+        elif message.from_agent == "risk_agent":
             self._process_risk_decision(message)
+
+    def _handle_strategy_proposal(self, message: AgentMessage):
+        """Store active strategy and notify operator via Telegram."""
+        payload = message.payload
+
+        # Mid-day reeval with no change — brief notification
+        if payload.get("signal") == "midday_reeval" and not payload.get("changed"):
+            self.logger.info(f"Mid-day reeval: no change, keeping {payload.get('strategy')}")
+            if self.telegram:
+                self.telegram.send_message(
+                    f"MIDDAY REEVAL — No Change\n"
+                    f"Keeping: {payload.get('strategy')}\n"
+                    f"VIX: {payload.get('vix_morning')} → {payload.get('vix_now')}\n"
+                    f"Sentiment: {payload.get('sentiment_morning')} → {payload.get('sentiment_now')}"
+                )
+            return
+
+        strategy = payload.get("strategy", "N/A")
+        bucket = payload.get("bucket", "conservative")
+        confidence = payload.get("confidence", "N/A")
+        regime = payload.get("regime", "N/A")
+        rationale = payload.get("rationale", "")
+        watchlist = payload.get("watchlist", [])
+
+        self.logger.info(f"Strategy from {message.from_agent}: {strategy} ({bucket})")
+
+        self.redis.set_state("state:active_strategy", {
+            "strategy": strategy,
+            "bucket": bucket,
+            "regime": regime,
+            "confidence": confidence,
+            "set_at": datetime.now(IST).isoformat(),
+        })
+
+        if self.telegram:
+            symbols = ", ".join(watchlist[:5])
+            if len(watchlist) > 5:
+                symbols += f" +{len(watchlist) - 5} more"
+            self.telegram.send_message(
+                f"STRATEGY [{bucket.upper()}]\n"
+                f"Strategy: {strategy}\n"
+                f"Regime: {regime} | Confidence: {confidence}\n"
+                f"Rationale: {rationale}\n"
+                f"Watchlist: {symbols or 'None'}"
+            )
 
     def _handle_response(self, message: AgentMessage):
         """Handle responses to orchestrator requests."""

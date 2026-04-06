@@ -52,6 +52,9 @@ class SwarmScheduler:
         # 08:00 — Strategists wake + morning graph
         self._add_job("morning_strategy", self._run_morning_graph, "08:00")
 
+        # 12:00 — Mid-day strategy re-evaluation
+        self._add_job("midday_reeval", self._midday_strategy_reeval, "12:00")
+
         # 09:00 — Trading agents wake
         self._add_job("analyst_wake", self._wake_agent, "09:00",
                        args=["analyst"])
@@ -334,6 +337,20 @@ class SwarmScheduler:
             )
         except Exception as e:
             logger.error(f"Morning graph failed: {e}")
+
+    def _midday_strategy_reeval(self):
+        """12:00 — Trigger strategist mid-day re-evaluation."""
+        logger.info("Triggering mid-day strategy re-evaluation")
+        strategist = self.agents.get("strategist")
+        if strategist:
+            from agents.message import AgentMessage, MessageType, Priority
+            strategist.on_message(AgentMessage(
+                from_agent="orchestrator",
+                to_agent="strategist",
+                type=MessageType.COMMAND,
+                payload={"command": "REEVAL_STRATEGY"},
+                priority=Priority.NORMAL,
+            ))
 
     def _run_signal_loop(self):
         """Every 5 min during market hours — run signal detection graph."""

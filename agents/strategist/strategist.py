@@ -11,10 +11,18 @@ from agents.message import AgentMessage, MessageType, Priority, StrategyConfig
 from config import CONSERVATIVE_STRATEGIES, DEFAULT_WATCHLIST
 
 
+VIX_CHANGE_THRESHOLD = 3.0   # re-evaluate if VIX moved > 3 points
+SENTIMENT_FLIP = {
+    "BULLISH": "BEARISH", "BEARISH": "BULLISH",
+}
+
+
 class StrategistAgent(BaseAgent):
     def __init__(self, redis_store, sqlite_store):
         super().__init__("strategist", redis_store, sqlite_store)
         self._todays_strategy: dict | None = None
+        self._morning_vix: float | None = None
+        self._morning_sentiment: str | None = None
 
     def on_start(self):
         self.logger.info("Strategist ready for morning strategy selection")
@@ -39,6 +47,8 @@ class StrategistAgent(BaseAgent):
             command = message.payload.get("command", "")
             if command == "SELECT_STRATEGY":
                 self._select_morning_strategy(message.payload)
+            elif command == "REEVAL_STRATEGY":
+                self._midday_reevaluation()
             elif command == "REVIEW_STRATEGY":
                 self._review_strategy(message.payload)
         elif message.type == MessageType.REQUEST:
@@ -113,6 +123,10 @@ class StrategistAgent(BaseAgent):
             self.logger.error(f"Strategy selection LLM failed: {e}, using fallback")
             self._todays_strategy = self._fallback_strategy(vix_data.get("ltp", 15))
 
+        # Snapshot for mid-day comparison
+        self._morning_vix = vix_data.get("ltp")
+        self._morning_sentiment = news.get("overall_sentiment")
+
         # Send to orchestrator
         self.send_message(
             to_agent="orchestrator",
@@ -125,6 +139,68 @@ class StrategistAgent(BaseAgent):
             priority=Priority.HIGH,
         )
         self.logger.info(f"Strategy selected: {strategy_name}")
+
+    def _midday_reevaluation(self):
+        """12 PM check — only switch strategy if conditions changed materially."""
+        if not self._todays_strategy:
+            self.logger.info("No morning strategy set — skipping mid-day reeval")
+            return
+
+        market = self.redis.get_market_data("data:market_snapshot") or {}
+        vix_data = market.get("indiavix", market.get("vix", {}))
+        current_vix = vix_data.get("ltp")
+
+        news = self.redis.get_market_data("data:news_summary") or {}
+        current_sentiment = news.get("overall_sentiment", "UNKNOWN")
+
+        # Check if VIX moved significantly
+        vix_changed = False
+        if self._morning_vix is not None and current_vix is not None:
+            vix_delta = abs(float(current_vix) - float(self._morning_vix))
+            if vix_delta >= VIX_CHANGE_THRESHOLD:
+                vix_changed = True
+                self.logger.info(
+                    f"VIX shifted {vix_delta:.1f} pts "
+                    f"({self._morning_vix} → {current_vix})"
+                )
+
+        # Check if sentiment flipped (BULLISH↔BEARISH)
+        sentiment_flipped = (
+            self._morning_sentiment is not None
+            and SENTIMENT_FLIP.get(self._morning_sentiment) == current_sentiment
+        )
+        if sentiment_flipped:
+            self.logger.info(
+                f"Sentiment flipped: {self._morning_sentiment} → {current_sentiment}"
+            )
+
+        if not vix_changed and not sentiment_flipped:
+            self.logger.info(
+                f"Mid-day reeval: no material change "
+                f"(VIX {self._morning_vix}→{current_vix}, "
+                f"sentiment {self._morning_sentiment}→{current_sentiment}). "
+                f"Keeping {self._todays_strategy.get('strategy')}"
+            )
+            self.send_message(
+                to_agent="orchestrator",
+                msg_type=MessageType.SIGNAL,
+                payload={
+                    "signal": "midday_reeval",
+                    "changed": False,
+                    "strategy": self._todays_strategy.get("strategy"),
+                    "vix_morning": self._morning_vix,
+                    "vix_now": current_vix,
+                    "sentiment_morning": self._morning_sentiment,
+                    "sentiment_now": current_sentiment,
+                },
+            )
+            return
+
+        # Material change detected — re-select strategy
+        self.logger.info(
+            "Mid-day reeval: material change detected, re-selecting strategy"
+        )
+        self._select_morning_strategy({})
 
     def _review_strategy(self, data: dict):
         """Review today's strategy performance (3:45 PM) using LLM."""

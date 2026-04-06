@@ -157,7 +157,7 @@ class DataAgent(BaseAgent):
             current_date=now.strftime("%Y-%m-%d"),
         )
         result["fetched_at"] = now.isoformat()
-        self.redis.set_market_data("data:news_summary", result, ttl=3600)
+        self.redis.set_market_data("data:news_summary", result, ttl=7200)
         sentiment = result.get("overall_sentiment", "UNKNOWN")
         headline_count = len(result.get("headlines", []))
         self.logger.info(
