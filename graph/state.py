@@ -2,42 +2,65 @@
 
 This TypedDict defines all the data that agents read/write
 as the graph executes different sub-flows.
+
+Scalar keys use a "last writer wins" reducer so that parallel
+branches (e.g. Strategist + Risk Strategist) can fan-in without
+LangGraph raising INVALID_CONCURRENT_GRAPH_UPDATE.
 """
 
-from typing import TypedDict
+from typing import Annotated, TypedDict
+
+
+def _last_value(current, new):
+    """Reducer: last writer wins (for scalar keys in parallel branches)."""
+    return new
+
+
+def _merge_dict(current, new):
+    """Reducer: shallow-merge dicts from parallel branches."""
+    if current is None:
+        return new
+    if new is None:
+        return current
+    return {**current, **new}
+
+
+def _concat_list(current, new):
+    """Reducer: concatenate lists from parallel branches."""
+    return (current or []) + (new or [])
 
 
 class SwarmState(TypedDict, total=False):
     # System
-    system_mode: str                    # PAPER / LIVE / HALTED / REVIEW
-    current_phase: str                  # PRE_MARKET / MARKET_OPEN / MARKET_CLOSE / POST_MARKET
-    trading_day: str                    # ISO date (YYYY-MM-DD)
+    system_mode: Annotated[str, _last_value]
+    current_phase: Annotated[str, _last_value]
+    trading_day: Annotated[str, _last_value]
 
     # Data
-    market_data_ready: bool
-    last_data_update: str               # ISO timestamp
-    market_snapshot: dict               # {nifty, banknifty, vix}
-    watchlist_data: dict                # per-symbol indicator data
+    market_data_ready: Annotated[bool, _last_value]
+    last_data_update: Annotated[str, _last_value]
+    market_snapshot: Annotated[dict, _merge_dict]
+    watchlist_data: Annotated[dict, _merge_dict]
 
     # Strategy
-    conservative_strategy: dict | None  # strategy config from Strategist
-    risk_strategy: dict | None          # strategy config from Risk Strategist
-    strategy_approved: bool             # human approved via Telegram
-    strategy_approval_time: str | None
+    conservative_strategy: Annotated[dict | None, _last_value]
+    risk_strategy: Annotated[dict | None, _last_value]
+    strategy_approved: Annotated[bool, _last_value]
+    strategy_approval_time: Annotated[str | None, _last_value]
 
     # Signals and trades
-    pending_signals: list               # signal IDs from Analyst awaiting Risk review
-    approved_orders: list               # orders approved by Risk, awaiting execution
-    rejected_proposals: list            # rejected proposals for logging
-    active_positions: list              # currently open positions
+    pending_signals: Annotated[list, _concat_list]
+    approved_orders: Annotated[list, _concat_list]
+    rejected_proposals: Annotated[list, _concat_list]
+    active_positions: Annotated[list, _concat_list]
 
     # Agent states
-    agent_statuses: dict                # {agent_id: {state, last_action, ...}}
+    agent_statuses: Annotated[dict, _merge_dict]
 
     # Human interaction
-    human_approval_pending: bool
-    human_response: str | None          # YES / NO / EDIT / specific command
+    human_approval_pending: Annotated[bool, _last_value]
+    human_response: Annotated[str | None, _last_value]
 
     # Flow control
-    error: str | None
-    halt_reason: str | None
+    error: Annotated[str | None, _last_value]
+    halt_reason: Annotated[str | None, _last_value]
