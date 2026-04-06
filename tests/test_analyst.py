@@ -252,7 +252,7 @@ class TestShortStopTarget:
             "stop_loss_pct": 1.5,
             "target_pct": 2.0,
         }
-        agent._pending_signals = []
+        agent._pending_signals = set()
 
         # Mock send_message to capture proposal
         captured = {}
@@ -287,7 +287,7 @@ class TestShortStopTarget:
             "stop_loss_pct": 1.5,
             "target_pct": 2.0,
         }
-        agent._pending_signals = []
+        agent._pending_signals = set()
 
         captured = {}
 

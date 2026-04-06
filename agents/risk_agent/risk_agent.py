@@ -142,19 +142,31 @@ class RiskAgent(BaseAgent):
         )
 
         # Send decision to orchestrator
+        decision_payload = {
+            **decision.model_dump(),
+            "symbol": symbol,
+            "entry_price": entry_price,
+            "bucket": bucket,
+            "transaction_type": "BUY" if proposal.get("direction") == "LONG" else "SELL",
+            "checks": checks,
+        }
         self.send_message(
             to_agent="orchestrator",
             msg_type=MessageType.SIGNAL,
-            payload={
-                **decision.model_dump(),
-                "symbol": symbol,
-                "entry_price": entry_price,
-                "bucket": bucket,
-                "transaction_type": "BUY" if proposal.get("direction") == "LONG" else "SELL",
-                "checks": checks,
-            },
+            payload=decision_payload,
             priority=Priority.HIGH,
             correlation_id=message.message_id,
+        )
+
+        # Notify analyst so it can clear the pending signal
+        self.send_message(
+            to_agent="analyst",
+            msg_type=MessageType.RESPONSE,
+            payload={
+                "proposal_id": proposal.get("proposal_id", ""),
+                "decision": decision.decision,
+            },
+            priority=Priority.NORMAL,
         )
 
         if all_passed:

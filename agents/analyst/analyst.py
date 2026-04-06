@@ -26,7 +26,7 @@ class AnalystAgent(BaseAgent):
     def __init__(self, redis_store, sqlite_store):
         super().__init__("analyst", redis_store, sqlite_store)
         self._strategy_config: dict | None = None
-        self._pending_signals: list = []  # max 2 proposals in queue
+        self._pending_signals: set = set()  # proposal IDs awaiting risk review
 
     def on_start(self):
         self.logger.info("Analyst ready for signal generation")
@@ -61,6 +61,14 @@ class AnalystAgent(BaseAgent):
             elif command == "HALT":
                 self._strategy_config = None
                 self.logger.info("Analyst halted — clearing strategy config")
+        elif message.type == MessageType.RESPONSE:
+            # Risk agent decision — clear pending signal
+            proposal_id = message.payload.get("proposal_id")
+            self._pending_signals.discard(proposal_id)
+            self.logger.debug(
+                f"Proposal {proposal_id} resolved ({message.payload.get('decision')}), "
+                f"pending: {len(self._pending_signals)}"
+            )
 
     def _scan_watchlist(self):
         """Scan watchlist symbols against strategy entry conditions."""
@@ -401,7 +409,7 @@ class AnalystAgent(BaseAgent):
             analyst_note=note,
         )
 
-        self._pending_signals.append(proposal.proposal_id)
+        self._pending_signals.add(proposal.proposal_id)
 
         self.send_message(
             to_agent="risk_agent",
@@ -444,5 +452,5 @@ class AnalystAgent(BaseAgent):
                 "bucket": "conservative",
             }
         self._scan_watchlist()
-        state["pending_signals"] = self._pending_signals.copy()
+        state["pending_signals"] = list(self._pending_signals)
         return state
