@@ -39,9 +39,9 @@
 5. NO_TRADE — No clear setup, do not force a trade
 
 ## Constraints
-- Monthly allocation: ₹10,000 fixed. No re-loading mid-month unless previous trades 
+- Monthly allocation: ₹20,000 fixed. No re-loading mid-month unless previous trades 
   closed positively.
-- Max ₹2,500 per single options trade.
+- Max ₹5,000 per single-leg options trade, ₹8,000 per straddle (both legs).
 - Only buy options — NEVER sell/write options.
 - Only Nifty, BankNifty weekly options OR liquid stock options.
 - Close any position down > 60% from entry mechanically — no exceptions.
