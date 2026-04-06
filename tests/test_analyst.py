@@ -1,12 +1,20 @@
-"""Tests for Analyst signal generation — bidirectional support.
+"""Tests for Analyst signal generation — bidirectional support,
+pending signal staleness, and intraday time guards.
 
 RSI_MEAN_REVERSION, VWAP_REVERSION, and ORB support BOTH directions.
 SWING_MOMENTUM remains LONG only.
 """
 
+import time as _time
+from datetime import datetime
+from unittest.mock import patch, MagicMock
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from agents.analyst.analyst import AnalystAgent
+
+IST = ZoneInfo("Asia/Kolkata")
 
 
 def _make_analyst_with_strategy(strategy_name, direction="BOTH", **overrides):
@@ -310,3 +318,219 @@ class TestShortStopTarget:
 
         assert captured["stop_loss"] < captured["entry_price"]
         assert captured["target"] > captured["entry_price"]
+
+
+# ── Pending signal staleness ───────────────────────────────────────────────
+
+
+class TestPendingSignalStaleness:
+
+    def test_stale_signals_cleared_after_2_minutes(self):
+        """Pending signals older than 120s should be auto-cleared."""
+        agent = _make_analyst_with_strategy("RSI_MEAN_REVERSION")
+        agent.logger = MagicMock()
+        agent.redis = type("FakeRedis", (), {
+            "get_market_data": lambda self, k: None,
+            "get_state": lambda self, k: None,
+        })()
+
+        # Add a signal timestamped 3 minutes ago
+        agent._pending_signals = {"old-proposal-1": _time.time() - 200}
+
+        agent._scan_watchlist()
+
+        assert "old-proposal-1" not in agent._pending_signals
+
+    def test_fresh_signals_not_cleared(self):
+        """Pending signals under 120s should be kept."""
+        agent = _make_analyst_with_strategy("RSI_MEAN_REVERSION")
+        agent.logger = MagicMock()
+        agent.redis = type("FakeRedis", (), {
+            "get_market_data": lambda self, k: None,
+            "get_state": lambda self, k: None,
+        })()
+
+        agent._pending_signals = {"fresh-proposal": _time.time() - 30}
+
+        agent._scan_watchlist()
+
+        assert "fresh-proposal" in agent._pending_signals
+
+    def test_max_2_pending_blocks_new_proposals(self):
+        """With 2 pending signals, new proposals should be skipped."""
+        agent = _make_analyst_with_strategy("RSI_MEAN_REVERSION",
+                                            direction="BOTH",
+                                            volume_confirmation=False)
+        agent._strategy_config["exit_conditions"] = {
+            "stop_loss_pct": 1.5,
+            "target_pct": 2.0,
+        }
+        now = _time.time()
+        agent._pending_signals = {
+            "pending-1": now,
+            "pending-2": now,
+        }
+        agent.logger = MagicMock()
+        agent.sqlite = type("FakeSQLite", (), {"log_signal": lambda self, x: None})()
+
+        signal = {
+            "symbol": "RELIANCE",
+            "direction": "LONG",
+            "signal_type": "RSI_OVERSOLD",
+            "entry_price": 2500,
+            "rsi": 28,
+            "volume_ratio": 1.5,
+        }
+        agent._submit_trade_proposal(signal)
+
+        # Should still be 2, not 3
+        assert len(agent._pending_signals) == 2
+
+    def test_response_clears_pending_signal(self):
+        """Risk agent RESPONSE should remove proposal from pending."""
+        from agents.message import AgentMessage, MessageType, Priority
+
+        agent = _make_analyst_with_strategy("RSI_MEAN_REVERSION")
+        agent.logger = MagicMock()
+        agent._pending_signals = {"prop-123": _time.time()}
+
+        msg = AgentMessage(
+            from_agent="risk_agent",
+            to_agent="analyst",
+            channel="channel:analyst",
+            type=MessageType.RESPONSE,
+            priority=Priority.NORMAL,
+            payload={"proposal_id": "prop-123", "decision": "APPROVED"},
+        )
+        agent.on_message(msg)
+
+        assert "prop-123" not in agent._pending_signals
+
+
+# ── Intraday time guard ────────────────────────────────────────────────────
+
+
+class TestIntradayTimeGuard:
+
+    def _make_scannable_agent(self, strategy_name, **overrides):
+        """Create an analyst agent ready for _scan_watchlist() calls."""
+        agent = _make_analyst_with_strategy(strategy_name, **overrides)
+        agent._pending_signals = {}
+        agent.logger = MagicMock()
+        agent.redis = type("FakeRedis", (), {
+            "get_market_data": lambda self, k: None,
+            "get_state": lambda self, k: None,
+        })()
+        return agent
+
+    @patch("agents.analyst.analyst.datetime")
+    def test_intraday_blocked_after_cutoff(self, mock_dt):
+        """Intraday strategy should not scan after 15:00."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 15, 5, tzinfo=IST)
+
+        agent = self._make_scannable_agent("RSI_MEAN_REVERSION")
+        agent._scan_watchlist()
+
+        agent.logger.info.assert_any_call("Past intraday cutoff — no new signals")
+
+    @patch("agents.analyst.analyst.datetime")
+    def test_swing_allowed_after_cutoff(self, mock_dt):
+        """Swing strategy should still scan after 15:00."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 15, 5, tzinfo=IST)
+
+        agent = self._make_scannable_agent("SWING_MOMENTUM", direction="LONG",
+                                           entry_threshold=25,
+                                           volume_confirmation=False)
+        agent._strategy_config["watchlist"] = []
+        agent._scan_watchlist()
+
+        cutoff_calls = [
+            c for c in agent.logger.info.call_args_list
+            if "intraday cutoff" in str(c)
+        ]
+        assert len(cutoff_calls) == 0
+
+    @patch("agents.analyst.analyst.datetime")
+    def test_intraday_allowed_before_cutoff(self, mock_dt):
+        """Intraday strategy should scan normally before 15:00."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 14, 30, tzinfo=IST)
+
+        agent = self._make_scannable_agent("RSI_MEAN_REVERSION")
+        agent._strategy_config["watchlist"] = []
+        agent._scan_watchlist()
+
+        cutoff_calls = [
+            c for c in agent.logger.info.call_args_list
+            if "intraday cutoff" in str(c)
+        ]
+        assert len(cutoff_calls) == 0
+
+
+# ── Execution agent time guard ─────────────────────────────────────────────
+
+
+class TestExecutionTimeGuard:
+
+    @patch("agents.execution_agent.execution_agent.datetime")
+    def test_intraday_blocked_after_cutoff(self, mock_dt):
+        """Intraday order should be blocked after 15:20."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 15, 25, tzinfo=IST)
+
+        from agents.execution_agent.execution_agent import ExecutionAgent
+
+        agent = ExecutionAgent.__new__(ExecutionAgent)
+        agent.logger = MagicMock()
+        agent._processed_orders = set()
+        agent.simulator = MagicMock()
+        agent.broker = None
+
+        order = {
+            "order_id": "test-order-1",
+            "symbol": "ICICIBANK",
+            "transaction_type": "BUY",
+            "quantity": 40,
+            "price": 1224.6,
+            "mode": "PAPER",
+            "strategy": "RSI_MEAN_REVERSION",
+        }
+        agent._execute_order(order)
+
+        agent.logger.warning.assert_any_call(
+            "Blocked ICICIBANK after intraday cutoff — too late to open"
+        )
+        agent.simulator.simulate_fill.assert_not_called()
+
+    @patch("agents.execution_agent.execution_agent.datetime")
+    def test_swing_allowed_after_cutoff(self, mock_dt):
+        """Swing order should proceed even after 15:20."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 15, 25, tzinfo=IST)
+
+        from agents.execution_agent.execution_agent import ExecutionAgent
+
+        agent = ExecutionAgent.__new__(ExecutionAgent)
+        agent.logger = MagicMock()
+        agent._processed_orders = set()
+        agent.simulator = MagicMock()
+        agent.simulator.simulate_fill.return_value = {
+            "order_id": "fill-1", "symbol": "SBIN",
+            "fill_price": 800, "quantity": 10,
+            "transaction_type": "BUY", "status": "FILLED",
+            "filled_at": "2026-04-07T15:25:00+05:30",
+            "slippage": 0.4, "brokerage": 20,
+        }
+        agent.broker = None
+        agent._report_fill = MagicMock()
+        agent._place_stop_loss = MagicMock()
+
+        order = {
+            "order_id": "test-order-2",
+            "symbol": "SBIN",
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 800,
+            "mode": "PAPER",
+            "strategy": "SWING_MOMENTUM",
+        }
+        agent._execute_order(order)
+
+        agent.simulator.simulate_fill.assert_called_once()
