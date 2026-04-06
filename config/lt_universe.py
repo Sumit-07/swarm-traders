@@ -88,6 +88,22 @@ LT_UNIVERSE = {
             ),
         },
         {
+            "name":            "Nifty Midcap 150 Index Fund",
+            "type":            "INDEX_FUND",
+            "tracks":          "Nifty Midcap 150 — top 150 midcap companies on NSE",
+            "expense_ratio":   0.35,
+            "how_to_buy":      "Zerodha Coin, Groww, or Kuvera — search Nifty Midcap 150",
+            "min_investment":  500,
+            "ltcg_applicable": True,
+            "notes": (
+                "Higher growth potential than Nifty 50 but 2-3x more volatile. "
+                "Only buy during VIX spikes above 22 — midcaps fall harder and "
+                "recover stronger than large caps in fear regimes. "
+                "Cap allocation at 20% of long-term portfolio. "
+                "Best AMCs: Motilal Oswal, Nippon, or UTI Nifty Midcap 150."
+            ),
+        },
+        {
             "name":            "SBI Gold Fund",
             "type":            "GOLD_FUND",
             "tracks":          "Gold price",
