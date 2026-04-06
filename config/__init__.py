@@ -235,7 +235,7 @@ ALLOWED_COMMUNICATION_PATHS = {
         "position_monitor",
     ],
     "analyst": ["risk_agent", "orchestrator"],
-    "risk_agent": ["orchestrator"],
+    "risk_agent": ["orchestrator", "analyst"],
     "execution_agent": ["orchestrator", "compliance_agent"],
     "compliance_agent": ["orchestrator"],
     "optimizer": ["orchestrator"],
