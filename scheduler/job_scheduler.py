@@ -34,7 +34,15 @@ class SwarmScheduler:
     def setup_schedule(self):
         """Register all daily scheduled jobs."""
 
-        # 06:55 — System startup
+        # 00:05 — Kite token refresh (runs every day including weekends)
+        self.scheduler.add_job(
+            self._refresh_kite_token,
+            CronTrigger(hour=0, minute=5, timezone=IST),
+            id="kite_token_refresh",
+            replace_existing=True,
+        )
+
+        # 06:55 — System startup (wake agents, morning prep)
         self._add_job("system_startup", self._system_startup, "06:55")
 
         # 07:00 — Data Agent wakes
@@ -210,13 +218,22 @@ class SwarmScheduler:
 
     # --- Scheduled Actions ---
 
-    def _system_startup(self):
-        """06:55 — Wake all agents and re-authenticate Kite for the new day."""
-        logger.info("System startup initiated (daily wake)")
+    def _refresh_kite_token(self):
+        """00:05 daily — Re-authenticate Kite after midnight token expiry.
 
-        # Re-authenticate Kite first (token expires at midnight)
+        Retries 3 times with 2-minute gaps. Sends CRITICAL alert if all fail.
+        """
+        import time as _time
+
         orchestrator = self.agents.get("orchestrator")
-        if orchestrator and orchestrator.broker and orchestrator.telegram:
+        if not orchestrator or not orchestrator.broker:
+            logger.info("No broker configured — skipping token refresh.")
+            return
+
+        max_retries = 3
+        retry_delay = 120  # 2 minutes
+
+        for attempt in range(1, max_retries + 1):
             try:
                 from tools.kite_auth import load_or_refresh_token
                 from tools.market_data import set_kite_client
@@ -227,16 +244,61 @@ class SwarmScheduler:
                 set_kite_client(kite)
                 orchestrator.broker.set_kite_client(kite)
                 build_instrument_cache(kite)
-                logger.info("Kite re-authenticated for new trading day.")
-            except Exception as e:
-                logger.error(f"Kite re-auth failed: {e}. Continuing in paper mode.")
+                logger.info("Kite token refreshed successfully (attempt %d).", attempt)
                 if self.telegram:
                     self.telegram.send_message(
-                        f"Kite re-auth failed: {e}\n"
-                        "Continuing in paper mode with yfinance data."
+                        "Kite token refreshed at midnight. Ready for tomorrow."
+                    )
+                return
+            except Exception as e:
+                logger.error(
+                    "Kite token refresh failed (attempt %d/%d): %s",
+                    attempt, max_retries, e,
+                )
+                if attempt < max_retries:
+                    _time.sleep(retry_delay)
+
+        # All retries exhausted — CRITICAL alert
+        logger.critical("Kite token refresh FAILED after %d attempts.", max_retries)
+        if self.telegram:
+            self.telegram.send_message(
+                "CRITICAL: Kite token refresh FAILED after 3 attempts.\n"
+                "The system will use yfinance fallback data.\n"
+                "Live trading is NOT possible until re-authenticated.\n"
+                "Send /authenticate to retry manually."
+            )
+
+    def _system_startup(self):
+        """06:55 — Wake all agents and ensure Kite auth is valid.
+
+        The 00:05 job handles normal daily token refresh, but this serves as
+        a fallback for server migrations, restarts, or missed midnight jobs.
+        """
+        logger.info("System startup initiated (daily wake + auth check)")
+
+        # Step 1: Ensure Kite token is valid (fallback re-auth)
+        orchestrator = self.agents.get("orchestrator")
+        if orchestrator and orchestrator.broker:
+            try:
+                from tools.kite_auth import load_or_refresh_token
+                from tools.market_data import set_kite_client
+                from tools.kite_market_data import build_instrument_cache
+
+                kite = load_or_refresh_token(orchestrator.telegram)
+                orchestrator.kite = kite
+                set_kite_client(kite)
+                orchestrator.broker.set_kite_client(kite)
+                build_instrument_cache(kite)
+                logger.info("Kite auth verified at startup.")
+            except Exception as e:
+                logger.error(f"Kite auth failed at startup: {e}")
+                if self.telegram:
+                    self.telegram.send_message(
+                        f"WARNING: Kite auth failed at startup: {e}\n"
+                        "System will use yfinance fallback data."
                     )
 
-        # Wake all agents (they were put to sleep at 17:15)
+        # Step 2: Wake all agents (they were put to sleep at 17:15)
         for agent_id, agent in self.agents.items():
             try:
                 agent.wake()
