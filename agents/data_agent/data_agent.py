@@ -65,7 +65,7 @@ class DataAgent(BaseAgent):
                 snapshot[index.lower()] = {"error": str(e)}
 
         snapshot["timestamp"] = datetime.now(IST).isoformat()
-        self.redis.set_market_data("data:market_snapshot", snapshot, ttl=120)
+        self.redis.set_market_data("data:market_snapshot", snapshot, ttl=360)
         self._last_action = "pulled market snapshot"
         self.logger.debug("Market snapshot saved to Redis.")
 
@@ -101,7 +101,7 @@ class DataAgent(BaseAgent):
                     "timestamp": datetime.now(IST).isoformat(),
                 }
                 self.redis.set_market_data(
-                    f"data:watchlist_ticks:{symbol}", latest, ttl=120,
+                    f"data:watchlist_ticks:{symbol}", latest, ttl=360,
                 )
             except Exception as e:
                 self.logger.warning(f"Failed to pull data for {symbol}: {e}")
