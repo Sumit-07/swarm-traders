@@ -61,6 +61,7 @@ class TelegramBot:
                 "authenticate": self._cmd_authenticate,
                 "optimizer": self._cmd_optimizer,
                 "catchup": self._cmd_catchup,
+                "lt_scan": self._cmd_lt_scan,
             }
             for cmd_name, handler in commands.items():
                 self._app.add_handler(CommandHandler(cmd_name, handler))
@@ -286,6 +287,12 @@ class TelegramBot:
             "Signal loop will resume on next 5-min tick."
         )
 
+    async def _cmd_lt_scan(self, update, context):
+        self._publish_command("LT_SCAN")
+        await update.message.reply_text(
+            "LT scan started. Will message you if opportunity found."
+        )
+
     async def _handle_text(self, update, context):
         """Handle plain text responses (YES/NO/EDIT)."""
         text = update.message.text.strip().upper()
@@ -297,5 +304,6 @@ class TelegramBot:
                 "Commands: /status /positions /halt /resume /pnl /strategy\n"
                 "/catchup — run full morning sequence manually\n"
                 "/authenticate — re-authenticate Kite\n"
+                "/lt_scan — run LT investment opportunity scan\n"
                 "Or reply YES/NO/EDIT to pending proposals."
             )

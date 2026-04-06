@@ -5,6 +5,11 @@ Budget 2026 STT changes and January 2026 lot size changes applied.
 Capital: ₹50,000 trading capital.
 
 Risk management rules here are non-negotiable. No agent or prompt can override them.
+
+NOTE: This was previously config.py at the project root. It was moved here
+when config/ became a package (to house lt_universe.py). All existing
+`from config import ...` statements continue to work because Python
+resolves `config` to this package's __init__.py.
 """
 
 import os
@@ -14,7 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Paths ---
-BASE_DIR = Path(__file__).parent
+BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
 LOGS_DIR = BASE_DIR / "logs"
 
@@ -209,6 +214,7 @@ AGENT_LLM_MODELS = {
     "compliance_agent": "gemini-flash",
     "optimizer": "gpt-4o",
     "position_monitor": None,
+    "lt_advisor": "gpt-4o-mini",
 }
 
 # --- Redis Channels ---

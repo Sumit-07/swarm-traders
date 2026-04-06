@@ -90,7 +90,7 @@ class TestModelRouting:
     def test_data_agent_gets_gemini(self, mock_get):
         mock_get.return_value = MagicMock()
         model = get_chat_model("data_agent")
-        mock_get.assert_called_with("gemini-2.0-flash")
+        mock_get.assert_called_with("gemini-2.5-flash")
 
 
 # --- BaseAgent.call_llm() integration ---

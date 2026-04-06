@@ -114,15 +114,16 @@ class AnalystAgent(BaseAgent):
         entry_conditions = self._strategy_config.get("entry_conditions", {})
         direction = entry_conditions.get("direction", "LONG")
 
-        # RSI Mean Reversion: buy when RSI < 32
-        if strategy == "RSI_MEAN_REVERSION" and direction == "LONG":
+        # RSI Mean Reversion: LONG when RSI < 32, SHORT when RSI > 68
+        if strategy == "RSI_MEAN_REVERSION":
             try:
                 threshold = float(entry_conditions.get("entry_threshold", 32))
             except (ValueError, TypeError):
                 threshold = 32
+            short_threshold = entry_conditions.get("short_threshold", 68)
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
-            if rsi < threshold:
+            if rsi < threshold and direction in ("LONG", "BOTH"):
                 if needs_volume and volume_ratio and volume_ratio < 1.2:
                     return None
                 return {
@@ -133,12 +134,91 @@ class AnalystAgent(BaseAgent):
                     "rsi": rsi,
                     "volume_ratio": volume_ratio,
                 }
+            if rsi > short_threshold and direction in ("SHORT", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < 1.2:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "RSI_OVERBOUGHT",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "volume_ratio": volume_ratio,
+                }
 
-        # Opening Range Breakout
+        # VWAP Reversion: LONG when price far below VWAP, SHORT when far above
+        if strategy == "VWAP_REVERSION":
+            vwap = tick_data.get("vwap")
+            if vwap is None or vwap == 0:
+                return None
+            vwap_dev_pct = (close - vwap) / vwap * 100
+
+            try:
+                threshold = float(entry_conditions.get("entry_threshold", -1.2))
+            except (ValueError, TypeError):
+                threshold = -1.2
+
+            if vwap_dev_pct < threshold and direction in ("LONG", "BOTH"):
+                return {
+                    "symbol": symbol,
+                    "direction": "LONG",
+                    "signal_type": "VWAP_BELOW",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "vwap": vwap,
+                    "vwap_deviation_pct": round(vwap_dev_pct, 2),
+                    "volume_ratio": volume_ratio,
+                }
+            if vwap_dev_pct > abs(threshold) and direction in ("SHORT", "BOTH"):
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "VWAP_ABOVE",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "vwap": vwap,
+                    "vwap_deviation_pct": round(vwap_dev_pct, 2),
+                    "volume_ratio": volume_ratio,
+                }
+
+        # Opening Range Breakout: LONG on upside breakout, SHORT on downside
         if strategy == "OPENING_RANGE_BREAKOUT":
-            pass
+            orb_high = tick_data.get("orb_high")
+            orb_low = tick_data.get("orb_low")
+            if orb_high is None or orb_low is None:
+                return None
+            needs_volume = entry_conditions.get("volume_confirmation", True)
+            vol_threshold = entry_conditions.get("volume_threshold", 1.5)
+
+            if close > orb_high and direction in ("LONG", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < vol_threshold:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "LONG",
+                    "signal_type": "ORB_BREAKOUT_UP",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "volume_ratio": volume_ratio,
+                }
+            if close < orb_low and direction in ("SHORT", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < vol_threshold:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "ORB_BREAKOUT_DOWN",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "volume_ratio": volume_ratio,
+                }
 
         # ADX-based strategies: SWING_MOMENTUM and VOLATILITY_ADJUSTED_SWING
+        # These remain LONG only — swing shorts carry overnight risk
         if strategy in ("SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING"):
             adx = tick_data.get("adx")
             if adx is None:
@@ -149,7 +229,7 @@ class AnalystAgent(BaseAgent):
                 threshold = 28 if strategy == "VOLATILITY_ADJUSTED_SWING" else 25
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
-            if adx > threshold and direction == "LONG":
+            if adx > threshold and direction in ("LONG", "BOTH"):
                 # RSI should be in momentum range (55-70)
                 if rsi is not None and not (55 <= rsi <= 70):
                     return None
@@ -272,10 +352,21 @@ class AnalystAgent(BaseAgent):
             quantity = max(1, int(quantity * 0.57))
 
         # Build analyst note based on signal type
-        if signal.get("signal_type") == "ADX_MOMENTUM":
+        signal_type = signal.get("signal_type", "")
+        if signal_type == "ADX_MOMENTUM":
             note = (
                 f"ADX at {signal.get('adx', 0):.1f}, RSI at {signal.get('rsi', 0):.1f} "
                 f"with volume {signal.get('volume_ratio', 0):.1f}x average"
+            )
+        elif "VWAP" in signal_type:
+            note = (
+                f"VWAP deviation {signal.get('vwap_deviation_pct', 0):.2f}%, "
+                f"RSI at {signal.get('rsi', 0):.1f}"
+            )
+        elif "ORB" in signal_type:
+            note = (
+                f"ORB {'upside' if signal['direction'] == 'LONG' else 'downside'} breakout, "
+                f"volume {signal.get('volume_ratio', 0):.1f}x average"
             )
         else:
             note = (
@@ -283,14 +374,23 @@ class AnalystAgent(BaseAgent):
                 f"volume {signal.get('volume_ratio', 0):.1f}x average"
             )
 
+        # Stop/target: flip for SHORT direction
+        is_short = signal["direction"] == "SHORT"
+        if is_short:
+            stop_loss = round(entry_price * (1 + stop_pct / 100), 2)
+            target = round(entry_price * (1 - target_pct / 100), 2)
+        else:
+            stop_loss = round(entry_price * (1 - stop_pct / 100), 2)
+            target = round(entry_price * (1 + target_pct / 100), 2)
+
         proposal = TradeProposal(
             symbol=signal["symbol"],
             direction=signal["direction"],
             signal_type=signal["signal_type"],
             entry_price=entry_price,
             quantity_suggested=quantity,
-            stop_loss=round(entry_price * (1 - stop_pct / 100), 2),
-            target=round(entry_price * (1 + target_pct / 100), 2),
+            stop_loss=stop_loss,
+            target=target,
             signal_confidence="MEDIUM",
             indicator_snapshot={
                 "rsi": signal.get("rsi"),

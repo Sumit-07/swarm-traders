@@ -57,7 +57,7 @@ def get_chat_model(agent_id: str):
     elif model_key == "gpt-4o-mini":
         return _get_openai_model("gpt-4o-mini")
     elif model_key == "gemini-flash":
-        return _get_gemini_model("gemini-2.0-flash")
+        return _get_gemini_model("gemini-2.5-flash")
     else:
         return _get_openai_model(model_key)
 

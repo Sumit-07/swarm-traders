@@ -103,6 +103,29 @@ class SwarmScheduler:
         # 17:15 — System sleep
         self._add_job("system_sleep", self._system_sleep, "17:15")
 
+        # ── LT_Advisor jobs ──────────────────────────────────────────────
+        # Morning scan — every day at 8:00 AM IST (including weekends)
+        self.scheduler.add_job(
+            self._lt_morning_scan,
+            CronTrigger(hour=8, minute=0, timezone=IST),
+            id="lt_morning_scan",
+            replace_existing=True,
+        )
+
+        # Midday VIX check — weekdays only, 12:30 PM IST
+        self._add_job("lt_midday_check", self._lt_midday_check, "12:30")
+
+        # EOD check — weekdays only, 15:45 PM IST
+        self._add_job("lt_eod_check", self._lt_eod_check, "15:45")
+
+        # Weekly summary — every Saturday, 10:00 AM IST
+        self.scheduler.add_job(
+            self._lt_weekly_summary,
+            CronTrigger(hour=10, minute=0, day_of_week="sat", timezone=IST),
+            id="lt_weekly_summary",
+            replace_existing=True,
+        )
+
         logger.info("All daily jobs scheduled")
 
     def start(self):
@@ -454,6 +477,38 @@ class SwarmScheduler:
                 f"Knowledge graph maintenance: {count} stale learnings archived. "
                 f"Active learnings: {active_count}"
             )
+
+    def _get_lt_advisor(self):
+        """Lazily create an LTAdvisor instance."""
+        orchestrator = self.agents.get("orchestrator")
+        if not orchestrator:
+            return None
+        from agents.lt_advisor.lt_advisor import LTAdvisor
+        return LTAdvisor(redis=orchestrator.redis, db=orchestrator.sqlite)
+
+    def _lt_morning_scan(self):
+        """08:00 daily — LT_Advisor morning opportunity scan."""
+        advisor = self._get_lt_advisor()
+        if advisor:
+            advisor.run(run_type="MORNING")
+
+    def _lt_midday_check(self):
+        """12:30 weekdays — LT_Advisor midday VIX check."""
+        advisor = self._get_lt_advisor()
+        if advisor:
+            advisor.run(run_type="MIDDAY")
+
+    def _lt_eod_check(self):
+        """15:45 weekdays — LT_Advisor EOD check."""
+        advisor = self._get_lt_advisor()
+        if advisor:
+            advisor.run(run_type="EOD")
+
+    def _lt_weekly_summary(self):
+        """Saturday 10:00 — LT_Advisor weekly summary."""
+        advisor = self._get_lt_advisor()
+        if advisor:
+            advisor.run(run_type="WEEKLY")
 
     def _system_sleep(self):
         """17:15 — All agents enter sleep mode."""
