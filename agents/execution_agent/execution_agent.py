@@ -83,12 +83,20 @@ class ExecutionAgent(BaseAgent):
     def _execute_order(self, order: dict):
         """Execute an approved order."""
         order_id = order.get("order_id", "")
+        proposal_id = order.get("proposal_id", "")
 
-        # Deduplication
+        # Deduplication — check both order_id and proposal_id to prevent
+        # duplicate execution when both message and graph paths deliver
+        # the same trade with different order_ids
         if order_id in self._processed_orders:
             self.logger.warning(f"Duplicate order {order_id} — skipping")
             return
+        if proposal_id and proposal_id in self._processed_orders:
+            self.logger.warning(f"Duplicate proposal {proposal_id} — skipping")
+            return
         self._processed_orders.add(order_id)
+        if proposal_id:
+            self._processed_orders.add(proposal_id)
 
         # Route straddle orders to dedicated handler
         if order.get("strategy") == "STRADDLE_BUY" or order.get("is_straddle"):

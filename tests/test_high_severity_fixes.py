@@ -424,3 +424,102 @@ class TestActiveStrategyPersistence:
 
         order = result["approved_orders"][0]
         assert order["strategy"] == "VWAP_REVERSION"
+
+
+# ── 6. Duplicate trade prevention ───────────────────────────────────────────
+
+
+class TestDuplicateTradeDedup:
+
+    def _make_execution_agent(self):
+        from agents.execution_agent.execution_agent import ExecutionAgent
+        from tools.order_simulator import OrderSimulator
+
+        agent = ExecutionAgent.__new__(ExecutionAgent)
+        agent.redis = FakeRedis(state={"state:positions": {"positions": []}})
+        agent.sqlite = FakeSQLite()
+        agent.logger = MagicMock()
+        agent.broker = None
+        agent._processed_orders = set()
+        agent.simulator = OrderSimulator()
+        agent._report_fill = MagicMock()
+        agent._place_stop_loss = MagicMock()
+        return agent
+
+    @patch("agents.execution_agent.execution_agent.datetime")
+    def test_same_proposal_different_order_ids_blocked(self, mock_dt):
+        """Two orders with same proposal_id but different order_ids = duplicate."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 10, 0, tzinfo=IST)
+
+        agent = self._make_execution_agent()
+
+        order1 = {
+            "order_id": "order-aaa",
+            "proposal_id": "prop-123",
+            "symbol": "RELIANCE",
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 2500,
+            "mode": "PAPER",
+            "strategy": "RSI_MEAN_REVERSION",
+        }
+        order2 = {
+            "order_id": "order-bbb",  # different order_id
+            "proposal_id": "prop-123",  # same proposal_id
+            "symbol": "RELIANCE",
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 2500,
+            "mode": "PAPER",
+            "strategy": "RSI_MEAN_REVERSION",
+        }
+
+        agent._execute_order(order1)
+        agent._execute_order(order2)
+
+        # Simulator should only have been called once
+        assert agent.simulator.open_positions is not None
+        assert agent.logger.warning.call_count >= 1
+        dup_warnings = [
+            c for c in agent.logger.warning.call_args_list
+            if "Duplicate proposal" in str(c)
+        ]
+        assert len(dup_warnings) == 1
+
+    @patch("agents.execution_agent.execution_agent.datetime")
+    def test_different_proposals_both_execute(self, mock_dt):
+        """Two orders with different proposal_ids should both execute."""
+        mock_dt.now.return_value = datetime(2026, 4, 7, 10, 0, tzinfo=IST)
+
+        agent = self._make_execution_agent()
+
+        order1 = {
+            "order_id": "order-aaa",
+            "proposal_id": "prop-111",
+            "symbol": "RELIANCE",
+            "transaction_type": "BUY",
+            "quantity": 10,
+            "price": 2500,
+            "mode": "PAPER",
+            "strategy": "RSI_MEAN_REVERSION",
+        }
+        order2 = {
+            "order_id": "order-bbb",
+            "proposal_id": "prop-222",
+            "symbol": "INFY",
+            "transaction_type": "BUY",
+            "quantity": 5,
+            "price": 1500,
+            "mode": "PAPER",
+            "strategy": "RSI_MEAN_REVERSION",
+        }
+
+        agent._execute_order(order1)
+        agent._execute_order(order2)
+
+        # No duplicate warnings
+        dup_warnings = [
+            c for c in agent.logger.warning.call_args_list
+            if "Duplicate" in str(c)
+        ]
+        assert len(dup_warnings) == 0
