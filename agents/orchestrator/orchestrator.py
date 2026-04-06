@@ -181,6 +181,10 @@ class OrchestratorAgent(BaseAgent):
             self._switch_to_live(message.payload)
         elif command == "GO_PAPER":
             self._switch_to_paper()
+        elif command == "APPROVE":
+            self._handle_human_approval(message.payload.get("proposal_id", ""))
+        elif command == "REJECT":
+            self._handle_human_rejection(message.payload.get("proposal_id", ""))
         elif command == "CATCHUP":
             self._handle_catchup()
         elif command == "LT_SCAN":
@@ -241,6 +245,48 @@ class OrchestratorAgent(BaseAgent):
             name="lt-scan-manual",
         ).start()
 
+    def _handle_human_approval(self, proposal_id: str):
+        """Human approved a risk bucket trade via Telegram."""
+        payload = self._human_approval_pending.pop(proposal_id, None)
+        if not payload:
+            # Try matching by partial ID or latest pending
+            if not proposal_id and self._human_approval_pending:
+                proposal_id, payload = self._human_approval_pending.popitem()
+            else:
+                self.logger.warning(f"No pending proposal found for {proposal_id}")
+                if self.telegram:
+                    self.telegram.send_message(
+                        f"No pending proposal: {proposal_id or 'none'}"
+                    )
+                return
+
+        self.logger.info(f"Human APPROVED risk trade {proposal_id}")
+        self._forward_to_execution(payload)
+        if self.telegram:
+            self.telegram.send_message(
+                f"APPROVED — {payload.get('symbol', '?')} forwarded to execution."
+            )
+
+    def _handle_human_rejection(self, proposal_id: str):
+        """Human rejected a risk bucket trade via Telegram."""
+        payload = self._human_approval_pending.pop(proposal_id, None)
+        if not payload:
+            if not proposal_id and self._human_approval_pending:
+                proposal_id, payload = self._human_approval_pending.popitem()
+            else:
+                self.logger.warning(f"No pending proposal found for {proposal_id}")
+                if self.telegram:
+                    self.telegram.send_message(
+                        f"No pending proposal: {proposal_id or 'none'}"
+                    )
+                return
+
+        self.logger.info(f"Human REJECTED risk trade {proposal_id}")
+        if self.telegram:
+            self.telegram.send_message(
+                f"REJECTED — {payload.get('symbol', '?')} dropped."
+            )
+
     def _handle_authenticate(self):
         """Force re-authentication with Kite Connect."""
         try:
@@ -288,7 +334,25 @@ class OrchestratorAgent(BaseAgent):
 
         if decision == "APPROVED":
             self.logger.info(f"Trade proposal {proposal_id} APPROVED by risk_agent")
-            self._forward_to_execution(message.payload)
+            bucket = message.payload.get("bucket", "conservative")
+            if bucket == "risk":
+                # Risk bucket trades require human approval
+                self._human_approval_pending[proposal_id] = message.payload
+                self.logger.info(f"Risk trade {proposal_id} queued for human approval")
+                if self.telegram:
+                    self.telegram.send_approval_request({
+                        "symbol": message.payload.get("symbol", ""),
+                        "direction": message.payload.get("transaction_type", "BUY"),
+                        "entry_price": message.payload.get("entry_price", 0),
+                        "stop_loss": message.payload.get("approved_stop_loss", 0),
+                        "target": message.payload.get("approved_target", 0),
+                        "quantity": message.payload.get("approved_position_size", 0),
+                        "bucket": "risk",
+                        "confidence": message.payload.get("confidence", ""),
+                        "note": f"Proposal ID: {proposal_id}",
+                    })
+            else:
+                self._forward_to_execution(message.payload)
         elif decision == "REJECTED":
             self.logger.info(
                 f"Trade proposal {proposal_id} REJECTED: "
