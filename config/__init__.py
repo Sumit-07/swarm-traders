@@ -114,8 +114,8 @@ RISK_LIMITS = {
     "max_daily_loss_inr":        1_500,     # hard rupee cap
 
     # Position limits
-    "max_simultaneous_positions": 4,        # up from 3 at ₹25k
-    "max_risk_positions":         3,        # up from 2 at ₹25k
+    "max_simultaneous_positions": 4,        # per bucket (conservative)
+    "max_risk_positions":         4,        # per bucket (risk)
     "max_capital_deployed_pct":   0.85,     # 85% max deployed, 15% cash reserve
 
     # Monthly

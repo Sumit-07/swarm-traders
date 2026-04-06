@@ -30,7 +30,7 @@ class TestRiskLimitValues:
 
     def test_max_simultaneous_positions(self):
         assert RISK_LIMITS["max_simultaneous_positions"] == 4
-        assert RISK_LIMITS["max_risk_positions"] == 3
+        assert RISK_LIMITS["max_risk_positions"] == 4
 
     def test_options_stop_loss_is_60_percent(self):
         assert RISK_LIMITS["options_stop_loss_pct"] == 0.60

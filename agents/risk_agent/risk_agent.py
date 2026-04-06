@@ -79,10 +79,11 @@ class RiskAgent(BaseAgent):
         remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
         checks["daily_loss_budget"] = remaining_budget > capital_at_risk
 
-        # Check 3: Not exceeding max positions
+        # Check 3: Not exceeding max positions (counted per bucket)
         positions = self.redis.get_state("state:positions") or {}
         open_count = len([p for p in positions.get("positions", [])
-                         if p.get("status") == "OPEN"])
+                         if p.get("status") == "OPEN"
+                         and p.get("bucket", "conservative") == bucket])
         max_pos = (RISK_LIMITS["max_risk_positions"] if bucket == "risk"
                    else RISK_LIMITS["max_simultaneous_positions"])
         checks["max_positions"] = open_count < max_pos
@@ -156,10 +157,15 @@ class RiskAgent(BaseAgent):
             correlation_id=message.message_id,
         )
 
-        self.logger.info(
-            f"{'APPROVED' if all_passed else 'REJECTED'} {symbol}: "
-            f"risk={risk_pct:.1%}, size={approved_size}"
-        )
+        if all_passed:
+            self.logger.info(
+                f"APPROVED {symbol}: risk={risk_pct:.1%}, size={approved_size}"
+            )
+        else:
+            self.logger.info(
+                f"REJECTED {symbol}: risk={risk_pct:.1%}, size={approved_size}, "
+                f"failed={failing_check}, checks={checks}"
+            )
 
     def _llm_trade_review(self, proposal: dict, checks: dict,
                           capital_at_risk: float, risk_pct: float,

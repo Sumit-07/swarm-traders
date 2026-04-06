@@ -73,7 +73,7 @@ class TradeProposal(BaseModel):
     direction: str  # LONG / SHORT
     signal_type: str  # e.g. RSI_OVERSOLD
     entry_price: float
-    quantity_suggested: int
+    quantity_suggested: int = Field(ge=1)
     stop_loss: float
     target: float
     signal_confidence: str  # HIGH / MEDIUM / LOW
@@ -101,7 +101,7 @@ class ApprovedOrder(BaseModel):
     symbol: str
     exchange: str = "NSE"
     transaction_type: str  # BUY / SELL
-    quantity: int
+    quantity: int = Field(ge=1)
     order_type: str  # LIMIT / MARKET
     price: float
     stop_loss_price: float

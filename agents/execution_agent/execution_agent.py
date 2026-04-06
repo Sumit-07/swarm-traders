@@ -68,6 +68,10 @@ class ExecutionAgent(BaseAgent):
         price = order.get("price", 0)
         txn_type = order.get("transaction_type", "BUY")
 
+        if quantity <= 0:
+            self.logger.error(f"Invalid quantity {quantity} for {symbol} — skipping")
+            return
+
         self.logger.info(
             f"Executing {mode} {txn_type} {symbol} {quantity}x @ {price}"
         )
