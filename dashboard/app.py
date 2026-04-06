@@ -27,6 +27,11 @@ pages = {
     "P&L": "dashboard/pages/03_pnl.py",
     "Trade Log": "dashboard/pages/04_trade_log.py",
     "Backtest Results": "dashboard/pages/05_backtest_results.py",
+    "Signals": "dashboard/pages/06_signals.py",
+    "Compliance": "dashboard/pages/07_compliance.py",
+    "System Log": "dashboard/pages/08_system_log.py",
+    "Learnings": "dashboard/pages/09_learnings.py",
+    "Watchlist": "dashboard/pages/10_watchlist.py",
 }
 
 st.sidebar.title("Swarm Traders")
@@ -57,6 +62,11 @@ page_modules = {
     "P&L": "dashboard.pages.03_pnl",
     "Trade Log": "dashboard.pages.04_trade_log",
     "Backtest Results": "dashboard.pages.05_backtest_results",
+    "Signals": "dashboard.pages.06_signals",
+    "Compliance": "dashboard.pages.07_compliance",
+    "System Log": "dashboard.pages.08_system_log",
+    "Learnings": "dashboard.pages.09_learnings",
+    "Watchlist": "dashboard.pages.10_watchlist",
 }
 
 module_name = page_modules[selection]

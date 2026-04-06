@@ -10,6 +10,7 @@ def render():
     try:
         from dashboard.data_helpers import (
             get_redis, get_positions, get_market_snapshot, get_system_mode,
+            get_position_ltp,
         )
         r = get_redis()
     except Exception as e:
@@ -38,14 +39,45 @@ def render():
         st.info("No open positions.")
         return
 
-    # Build positions table
+    # Build positions table with unrealized P&L
+    total_unrealized = 0
+    for p in positions:
+        symbol = p.get("symbol", "")
+        ltp = get_position_ltp(r, symbol)
+        if ltp:
+            entry = p.get("entry_price", 0)
+            qty = p.get("quantity", 0)
+            direction = p.get("direction", "LONG")
+            if direction == "SHORT":
+                pnl = (entry - ltp) * qty
+            else:
+                pnl = (ltp - entry) * qty
+            p["ltp"] = round(ltp, 2)
+            p["unrealized_pnl"] = round(pnl, 2)
+            total_unrealized += pnl
+        else:
+            p["ltp"] = None
+            p["unrealized_pnl"] = None
+
     df = pd.DataFrame(positions)
     display_cols = [
-        "symbol", "direction", "entry_price", "quantity",
-        "stop_loss", "target", "bucket", "entry_time",
+        "symbol", "direction", "entry_price", "ltp", "quantity",
+        "unrealized_pnl", "stop_loss", "target", "strategy",
+        "bucket", "entry_time",
     ]
     available = [c for c in display_cols if c in df.columns]
-    st.dataframe(df[available], use_container_width=True, hide_index=True)
+
+    # Color-code P&L column
+    if "unrealized_pnl" in df.columns:
+        def color_pnl(val):
+            if pd.isna(val):
+                return ""
+            return "color: #2ecc71" if val >= 0 else "color: #e74c3c"
+
+        styled = df[available].style.applymap(color_pnl, subset=["unrealized_pnl"])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+    else:
+        st.dataframe(df[available], use_container_width=True, hide_index=True)
 
     # Position summary
     st.subheader("Summary")
@@ -56,7 +88,9 @@ def render():
     conservative_capital = CAPITAL["conservative_bucket"]
     utilization = (total_deployed / conservative_capital * 100) if conservative_capital > 0 else 0
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Capital Deployed", f"INR {total_deployed:,.0f}")
     c2.metric("Utilization", f"{utilization:.1f}%")
     c3.metric("Available", f"INR {conservative_capital - total_deployed:,.0f}")
+    pnl_color = "normal" if total_unrealized >= 0 else "inverse"
+    c4.metric("Unrealized P&L", f"INR {total_unrealized:,.0f}", delta_color=pnl_color)

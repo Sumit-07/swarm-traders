@@ -71,12 +71,47 @@ def render():
     stats = compute_trade_stats(trades_df)
     st.subheader("Trade Statistics")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # Calculate win/loss streak
+    streak_label = "N/A"
+    if not trades_df.empty and "pnl" in trades_df.columns:
+        closed = trades_df[trades_df["status"] == "CLOSED"].sort_values(
+            "exit_time", ascending=False
+        )
+        if not closed.empty:
+            streak = 0
+            first_sign = None
+            for _, row in closed.iterrows():
+                pnl_val = row.get("pnl", 0) or 0
+                sign = "W" if pnl_val > 0 else "L" if pnl_val < 0 else None
+                if sign is None:
+                    continue
+                if first_sign is None:
+                    first_sign = sign
+                if sign == first_sign:
+                    streak += 1
+                else:
+                    break
+            if first_sign:
+                streak_label = f"{streak}{first_sign}"
+
+    # Best/worst day
+    best_day = worst_day = "N/A"
+    if not pnl_df.empty and pnl_col in pnl_df.columns:
+        best_idx = pnl_df[pnl_col].idxmax()
+        worst_idx = pnl_df[pnl_col].idxmin()
+        best_val = pnl_df.loc[best_idx, pnl_col]
+        worst_val = pnl_df.loc[worst_idx, pnl_col]
+        best_day = f"INR {best_val:+,.0f}"
+        worst_day = f"INR {worst_val:+,.0f}"
+
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric("Total Trades", stats["total"])
     c2.metric("Wins", stats["wins"])
     c3.metric("Losses", stats["losses"])
     c4.metric("Win Rate", f"{stats['win_rate']:.1%}")
     c5.metric("Net P&L", f"INR {stats['total_pnl']:,.2f}")
+    c6.metric("Streak", streak_label)
+    c7.metric("Best / Worst Day", best_day, worst_day)
 
     # --- Drawdown chart (from cumulative P&L) ---
     if not pnl_df.empty and pnl_col in pnl_df.columns:

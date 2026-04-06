@@ -85,7 +85,7 @@ def get_daily_pnl_df(engine, days: int = 30) -> pd.DataFrame:
     """Fetch daily P&L for the last N days."""
     query = """
         SELECT date, conservative_pnl, risk_pnl, total_pnl,
-               conservative_trades, risk_trades, total_trades
+               trades_count, wins, losses, max_drawdown, system_mode
         FROM daily_pnl
         ORDER BY date DESC LIMIT :days
     """
@@ -119,6 +119,77 @@ def get_audit_df(engine, limit: int = 30) -> pd.DataFrame:
         return pd.read_sql(query, engine, params={"limit": limit})
     except Exception:
         return pd.DataFrame()
+
+
+def get_monitor_alerts_df(engine, days: int = 30) -> pd.DataFrame:
+    """Fetch position monitor alerts for the last N days."""
+    query = """
+        SELECT * FROM monitor_alerts
+        WHERE alerted_at >= datetime('now', :days_ago)
+        ORDER BY alerted_at DESC
+    """
+    try:
+        return pd.read_sql(query, engine, params={"days_ago": f"-{days} days"})
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_orchestrator_log_df(engine, days: int = 7) -> pd.DataFrame:
+    """Fetch orchestrator event log."""
+    query = """
+        SELECT * FROM orchestrator_log
+        WHERE created_at >= datetime('now', :days_ago)
+        ORDER BY created_at DESC
+    """
+    try:
+        return pd.read_sql(query, engine, params={"days_ago": f"-{days} days"})
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_learnings_df(engine) -> pd.DataFrame:
+    """Fetch active (non-archived) optimizer learnings."""
+    query = """
+        SELECT agent_target, category, regime, applies_to, learning,
+               confidence, times_reinforced, last_reinforced, outcome_pnl
+        FROM learnings WHERE archived = 0
+        ORDER BY times_reinforced DESC, confidence DESC
+    """
+    try:
+        return pd.read_sql(query, engine)
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_meetings_df(engine, limit: int = 30) -> pd.DataFrame:
+    """Fetch optimizer meeting history."""
+    query = """
+        SELECT meeting_date, trade_count, conservative_pnl, risk_pnl,
+               regime, learnings_written
+        FROM optimizer_meetings
+        ORDER BY meeting_date DESC LIMIT :limit
+    """
+    try:
+        return pd.read_sql(query, engine, params={"limit": limit})
+    except Exception:
+        return pd.DataFrame()
+
+
+def get_watchlist_ticks(r, symbols: list[str]) -> list[dict]:
+    """Fetch live indicator data for watchlist symbols from Redis."""
+    ticks = []
+    for symbol in symbols:
+        data = _redis_get_json(r, f"data:watchlist_ticks:{symbol}")
+        if data:
+            data["symbol"] = symbol
+            ticks.append(data)
+    return ticks
+
+
+def get_position_ltp(r, symbol: str) -> float | None:
+    """Get current LTP for a symbol from watchlist tick data."""
+    data = _redis_get_json(r, f"data:watchlist_ticks:{symbol}")
+    return data.get("close") or data.get("ltp")
 
 
 def compute_trade_stats(trades_df: pd.DataFrame) -> dict:
