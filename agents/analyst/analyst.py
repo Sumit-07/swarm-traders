@@ -104,7 +104,10 @@ class AnalystAgent(BaseAgent):
 
         # RSI Mean Reversion: buy when RSI < 32
         if strategy == "RSI_MEAN_REVERSION" and direction == "LONG":
-            threshold = float(entry_conditions.get("entry_threshold", 32))
+            try:
+                threshold = float(entry_conditions.get("entry_threshold", 32))
+            except (ValueError, TypeError):
+                threshold = 32
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
             if rsi < threshold:
@@ -128,7 +131,10 @@ class AnalystAgent(BaseAgent):
             adx = tick_data.get("adx")
             if adx is None:
                 return None
-            threshold = float(entry_conditions.get("entry_threshold", 25))
+            try:
+                threshold = float(entry_conditions.get("entry_threshold", 25))
+            except (ValueError, TypeError):
+                threshold = 28 if strategy == "VOLATILITY_ADJUSTED_SWING" else 25
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
             if adx > threshold and direction == "LONG":

@@ -91,8 +91,8 @@ Respond ONLY in this JSON format:
   "rationale": "2–3 sentence explanation a non-trader can understand",
   "watchlist": ["SYMBOL1", "SYMBOL2", ...],  // max 5 symbols
   "entry_conditions": {
-    "indicator": "RSI | VWAP | ORB | price_action",
-    "entry_threshold": "specific value",
+    "indicator": "RSI | VWAP | ORB | ADX | price_action",
+    "entry_threshold": 0.0,   // MUST be a number (e.g. 32 for RSI, 28 for ADX)
     "volume_confirmation": true | false,
     "direction": "LONG | SHORT | NEUTRAL"
   },
