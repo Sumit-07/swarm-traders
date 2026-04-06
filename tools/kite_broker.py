@@ -171,3 +171,39 @@ def _map_product(kite, product: str) -> str:
         "NRML": kite.PRODUCT_NRML,
     }
     return mapping.get(product, kite.PRODUCT_MIS)
+
+
+def slice_order_if_needed(
+    symbol:    str,
+    quantity:  int,
+) -> list[int]:
+    """
+    Checks if order quantity exceeds NSE freeze limit.
+    If so, slices into multiple sub-orders.
+    Returns list of quantities to send as separate orders.
+
+    At current capital levels (1-3 lots), this will almost never trigger.
+    But it must exist in the architecture for correctness.
+    """
+    from config import CONTRACT_SPECIFICATIONS
+
+    spec = CONTRACT_SPECIFICATIONS.get(symbol, {})
+    freeze_limit = spec.get("freeze_limit", 999999)
+    lot_size = spec.get("lot_size", 1)
+
+    if quantity <= freeze_limit:
+        return [quantity]
+
+    # Slice into freeze-limit sized chunks, each a valid lot multiple
+    slices = []
+    remaining = quantity
+    while remaining > 0:
+        chunk = min(remaining, freeze_limit)
+        # Round down to nearest lot
+        valid_chunk = (chunk // lot_size) * lot_size
+        if valid_chunk == 0:
+            break
+        slices.append(valid_chunk)
+        remaining -= valid_chunk
+
+    return slices

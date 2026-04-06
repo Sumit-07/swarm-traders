@@ -15,6 +15,11 @@ from agents.message import (
     AgentMessage, MessageType, Priority, TradeProposal,
 )
 from config import CAPITAL, RISK_LIMITS
+from tools.cost_estimator import (
+    estimate_equity_roundtrip_cost,
+    estimate_options_roundtrip_cost,
+    is_trade_viable,
+)
 
 
 class AnalystAgent(BaseAgent):
@@ -74,6 +79,12 @@ class AnalystAgent(BaseAgent):
 
             signal = self._check_entry_conditions(symbol, tick_data, strategy)
             if signal:
+                # Pre-LLM cost check — reject if profit < 2× costs
+                cost_viable, cost_reason = self._validate_signal_cost(signal)
+                if not cost_viable:
+                    self.logger.info(f"Signal rejected by cost check for {symbol}: {cost_reason}")
+                    continue
+
                 # Validate signal with LLM for additional context
                 validated = self._validate_signal_with_llm(signal, tick_data)
                 if validated and validated.get("signal_valid", False):
@@ -155,6 +166,44 @@ class AnalystAgent(BaseAgent):
                 }
 
         return None
+
+    def _validate_signal_cost(self, signal: dict) -> tuple[bool, str]:
+        """Pre-LLM cost check. Rejects signals where expected profit < 2x costs."""
+        entry_price = signal.get("entry_price", 0)
+        if entry_price <= 0:
+            return False, "Entry price is zero or negative"
+
+        exit_conditions = self._strategy_config.get("exit_conditions", {})
+        target_pct = (
+            exit_conditions.get("target_pct")
+            or self._strategy_config.get("target_pct", 2.0)
+        )
+        stop_pct = (
+            exit_conditions.get("stop_loss_pct")
+            or self._strategy_config.get("stop_loss_pct", 1.5)
+        )
+
+        # Estimate position size (same logic as _submit_trade_proposal)
+        capital = CAPITAL["conservative_bucket"]
+        max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
+        risk_per_share = entry_price * stop_pct / 100
+        quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
+
+        strategy_name = self._strategy_config.get("strategy_name", "")
+        if strategy_name == "VOLATILITY_ADJUSTED_SWING":
+            quantity = max(1, int(quantity * 0.57))
+
+        position_value = entry_price * quantity
+        expected_gross = position_value * (target_pct / 100)
+
+        cost = estimate_equity_roundtrip_cost(
+            position_value_inr=position_value,
+            is_intraday=strategy_name not in (
+                "SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING"
+            ),
+        )
+
+        return is_trade_viable(expected_gross, cost)
 
     def _validate_signal_with_llm(self, signal: dict,
                                    tick_data: dict) -> dict | None:
