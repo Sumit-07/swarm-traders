@@ -64,14 +64,14 @@ def straddle_entry_valid(bar: dict, vix: float, prev_close: float) -> bool:
 def straddle_pnl(
     entry_combined_premium: float,
     exit_combined_premium: float,
-    lot_size: int = 25,
+    lot_size: int = 65,
 ) -> float:
     """Calculate straddle P&L in INR.
 
     Args:
         entry_combined_premium: Combined call+put premium at entry (points)
         exit_combined_premium:  Combined call+put premium at exit (points)
-        lot_size:               Nifty lot size (25 as of 2025)
+        lot_size:               Nifty lot size (65 as of January 2026)
 
     Returns:
         P&L in INR (positive = profit).

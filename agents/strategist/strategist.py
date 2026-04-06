@@ -114,7 +114,7 @@ class StrategistAgent(BaseAgent):
 
         try:
             result = self.call_llm("PROMPT_STRATEGY_REVIEW", {
-                "capital": 25000,
+                "capital": CAPITAL["conservative_bucket"],
                 "strategy_name": self._todays_strategy.get("strategy", "N/A"),
                 "morning_rationale": self._todays_strategy.get("rationale", "N/A"),
                 "regime_forecast": self._todays_strategy.get("regime", "N/A"),

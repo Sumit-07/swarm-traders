@@ -14,6 +14,7 @@ from agents.base_agent import BaseAgent
 from agents.message import (
     AgentMessage, MessageType, Priority, TradeProposal,
 )
+from config import CAPITAL, RISK_LIMITS
 
 
 class AnalystAgent(BaseAgent):
@@ -165,7 +166,7 @@ class AnalystAgent(BaseAgent):
             result = self.call_llm("PROMPT_SIGNAL_VALIDATION", {
                 "strategy_name": self._strategy_config.get("strategy_name", ""),
                 "strategy_confidence": self._strategy_config.get("confidence", "MEDIUM"),
-                "available_capital": self._strategy_config.get("available_capital", 25000),
+                "available_capital": self._strategy_config.get("available_capital", CAPITAL["conservative_bucket"]),
                 "symbol": signal["symbol"],
                 "signal_type": signal["direction"],
                 "trigger_indicator": signal.get("signal_type", "RSI"),
@@ -211,8 +212,7 @@ class AnalystAgent(BaseAgent):
         entry_price = signal["entry_price"]
         strategy_name = self._strategy_config.get("strategy_name", "")
 
-        # Position sizing: use risk-based sizing (2% capital at risk)
-        from config import CAPITAL, RISK_LIMITS
+        # Position sizing: use risk-based sizing (1.5% capital at risk)
         capital = CAPITAL["conservative_bucket"]
         max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
         risk_per_share = entry_price * stop_pct / 100
