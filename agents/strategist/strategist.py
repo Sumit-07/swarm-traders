@@ -52,6 +52,13 @@ class StrategistAgent(BaseAgent):
         vix_data = market.get("indiavix", market.get("vix", {}))
         nifty = market.get("nifty", {})
 
+        self.logger.info(
+            "Market data for strategy: Nifty=%s, BankNifty=%s, VIX=%s",
+            nifty.get("ltp", "N/A"),
+            market.get("banknifty", {}).get("ltp", "N/A"),
+            vix_data.get("ltp", "N/A"),
+        )
+
         variables = {
             "capital": CAPITAL["conservative_bucket"],
             "trend_direction": nifty.get("change", "unknown"),
