@@ -5,6 +5,7 @@ by calculating indicators and validating entry conditions.
 Disciplined and precise — follows the config exactly.
 """
 
+import time as _time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -14,7 +15,7 @@ from agents.base_agent import BaseAgent
 from agents.message import (
     AgentMessage, MessageType, Priority, TradeProposal,
 )
-from config import CAPITAL, RISK_LIMITS
+from config import CAPITAL, RISK_LIMITS, TRADING_HOURS, SWING_STRATEGIES
 from tools.cost_estimator import (
     estimate_equity_roundtrip_cost,
     estimate_options_roundtrip_cost,
@@ -26,7 +27,7 @@ class AnalystAgent(BaseAgent):
     def __init__(self, redis_store, sqlite_store):
         super().__init__("analyst", redis_store, sqlite_store)
         self._strategy_config: dict | None = None
-        self._pending_signals: set = set()  # proposal IDs awaiting risk review
+        self._pending_signals: dict = {}  # proposal_id -> timestamp
 
     def on_start(self):
         self.logger.info("Analyst ready for signal generation")
@@ -64,7 +65,7 @@ class AnalystAgent(BaseAgent):
         elif message.type == MessageType.RESPONSE:
             # Risk agent decision — clear pending signal
             proposal_id = message.payload.get("proposal_id")
-            self._pending_signals.discard(proposal_id)
+            self._pending_signals.pop(proposal_id, None)
             self.logger.debug(
                 f"Proposal {proposal_id} resolved ({message.payload.get('decision')}), "
                 f"pending: {len(self._pending_signals)}"
@@ -72,6 +73,20 @@ class AnalystAgent(BaseAgent):
 
     def _scan_watchlist(self):
         """Scan watchlist symbols against strategy entry conditions."""
+        # Clear stale pending signals (>2 min without risk agent response)
+        now = _time.time()
+        stale = [pid for pid, ts in self._pending_signals.items() if now - ts > 120]
+        for pid in stale:
+            self.logger.warning(f"Clearing stale pending signal {pid} (>2 min)")
+            self._pending_signals.pop(pid)
+
+        # Block intraday strategies after no_new_trades cutoff
+        strategy_name = (self._strategy_config or {}).get("strategy_name", "")
+        if strategy_name not in SWING_STRATEGIES:
+            if datetime.now(IST).strftime("%H:%M") >= TRADING_HOURS["no_new_trades"]:
+                self.logger.info("Past intraday cutoff — no new signals")
+                return
+
         if not self._strategy_config:
             self.logger.info("No strategy config — skipping scan")
             return
@@ -409,7 +424,7 @@ class AnalystAgent(BaseAgent):
             analyst_note=note,
         )
 
-        self._pending_signals.add(proposal.proposal_id)
+        self._pending_signals[proposal.proposal_id] = _time.time()
 
         self.send_message(
             to_agent="risk_agent",

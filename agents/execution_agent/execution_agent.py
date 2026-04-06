@@ -13,6 +13,7 @@ from agents.base_agent import BaseAgent
 from agents.message import (
     AgentMessage, FillConfirmation, MessageType, Priority,
 )
+from config import TRADING_HOURS, SWING_STRATEGIES
 from tools.order_simulator import OrderSimulator
 
 
@@ -71,6 +72,15 @@ class ExecutionAgent(BaseAgent):
         if quantity <= 0:
             self.logger.error(f"Invalid quantity {quantity} for {symbol} — skipping")
             return
+
+        # Block new intraday entries after cutoff (last safety net)
+        strategy = order.get("strategy", "")
+        if strategy not in SWING_STRATEGIES:
+            if datetime.now(IST).strftime("%H:%M") >= TRADING_HOURS["intraday_cutoff"]:
+                self.logger.warning(
+                    f"Blocked {symbol} after intraday cutoff — too late to open"
+                )
+                return
 
         self.logger.info(
             f"Executing {mode} {txn_type} {symbol} {quantity}x @ {price}"

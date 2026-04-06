@@ -107,6 +107,7 @@ class ApprovedOrder(BaseModel):
     stop_loss_price: float
     target_price: float
     bucket: str
+    strategy: str = ""
     mode: str  # PAPER / LIVE
     approved_by: str
     approved_at: str = Field(default_factory=lambda: datetime.now(IST).isoformat())

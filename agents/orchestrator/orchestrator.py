@@ -298,6 +298,7 @@ class OrchestratorAgent(BaseAgent):
 
     def _forward_to_execution(self, risk_approval: dict):
         """Forward approved order to execution agent."""
+        active_strategy = self.redis.get_state("state:active_strategy") or {}
         order = ApprovedOrder(
             proposal_id=risk_approval.get("proposal_id", ""),
             symbol=risk_approval.get("symbol", ""),
@@ -308,6 +309,7 @@ class OrchestratorAgent(BaseAgent):
             stop_loss_price=risk_approval.get("approved_stop_loss", 0),
             target_price=risk_approval.get("approved_target", 0),
             bucket=risk_approval.get("bucket", "conservative"),
+            strategy=active_strategy.get("strategy", ""),
             mode=self._get_system_mode(),
             approved_by="risk_agent",
         )

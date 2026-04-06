@@ -269,6 +269,9 @@ RISK_STRATEGIES = [
     "NO_TRADE",
 ]
 
+# Strategies held overnight — exempt from intraday cutoff
+SWING_STRATEGIES = ("SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING")
+
 # --- Backtest Gate Criteria ---
 # A strategy must pass ALL thresholds before paper trading.
 BACKTEST_GATE_CRITERIA = {
