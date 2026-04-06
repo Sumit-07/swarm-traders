@@ -251,6 +251,9 @@ def run_swarm():
     scheduler = SwarmScheduler(agents, graphs, telegram)
     scheduler.start()
 
+    # Give orchestrator a reference so /catchup command works
+    agents["orchestrator"].swarm_scheduler = scheduler
+
     telegram.send_message(
         f"Trading system online.\n"
         f"Mode: {TRADING_MODE}\n"

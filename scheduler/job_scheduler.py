@@ -116,6 +116,32 @@ class SwarmScheduler:
         self.scheduler.shutdown(wait=False)
         logger.info("Swarm scheduler stopped")
 
+    def catchup(self):
+        """Manually trigger the full morning sequence.
+
+        Use when the system missed the scheduled startup (e.g. restart at 10 AM).
+        Runs: Kite re-auth → wake all agents → morning strategy graph.
+        The signal loop and position monitor are already on cron and will
+        pick up automatically on the next 5-minute tick.
+        """
+        logger.info("CATCHUP triggered — running full morning sequence")
+
+        if self.telegram:
+            self.telegram.send_message(
+                "Catchup initiated. Running: auth → wake → morning strategy..."
+            )
+
+        # Step 1: Re-authenticate Kite + wake agents
+        self._system_startup()
+
+        # Step 2: Run morning strategy graph
+        self._run_morning_graph()
+
+        if self.telegram:
+            self.telegram.send_message(
+                "Catchup complete. Signal loop will run on next 5-min tick."
+            )
+
     # --- Helper ---
 
     def _add_job(self, job_id: str, func, time_str: str, args=None):

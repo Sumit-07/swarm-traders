@@ -119,6 +119,27 @@ class OrchestratorAgent(BaseAgent):
             self._switch_to_live(message.payload)
         elif command == "GO_PAPER":
             self._switch_to_paper()
+        elif command == "CATCHUP":
+            self._handle_catchup()
+
+    def _handle_catchup(self):
+        """Run the full morning sequence manually (auth + wake + strategy)."""
+        scheduler = getattr(self, "swarm_scheduler", None)
+        if not scheduler:
+            self.logger.error("No scheduler reference — catchup unavailable")
+            if self.telegram:
+                self.telegram.send_message("Catchup failed: scheduler not available.")
+            return
+        try:
+            import threading
+            # Run in background thread to not block message listener
+            threading.Thread(
+                target=scheduler.catchup, daemon=True, name="catchup",
+            ).start()
+        except Exception as e:
+            self.logger.error(f"Catchup failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"Catchup failed: {e}")
 
     def _handle_authenticate(self):
         """Force re-authentication with Kite Connect."""
