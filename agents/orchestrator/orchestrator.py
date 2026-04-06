@@ -83,10 +83,24 @@ class OrchestratorAgent(BaseAgent):
 
     def _handle_response(self, message: AgentMessage):
         """Handle responses to orchestrator requests."""
+        status = message.payload.get("status", "unknown")
         self.logger.info(
-            f"Response from {message.from_agent}: "
-            f"{message.payload.get('status', 'unknown')}"
+            f"Response from {message.from_agent}: {status}"
         )
+
+        # Notify human on Telegram when a trade is executed
+        if message.from_agent == "execution_agent" and status == "FILLED":
+            symbol = message.payload.get("symbol", "?")
+            txn = message.payload.get("transaction_type", "?")
+            qty = message.payload.get("quantity", 0)
+            fill_price = message.payload.get("fill_price", 0)
+            mode = message.payload.get("mode", "PAPER")
+            if self.telegram:
+                self.telegram.send_message(
+                    f"{'📄' if mode == 'PAPER' else '🔴'} TRADE EXECUTED\n"
+                    f"{txn} {symbol} {qty}x @ ₹{fill_price:.2f}\n"
+                    f"Mode: {mode}"
+                )
 
     def _handle_alert(self, message: AgentMessage):
         """Handle alerts from any agent."""
