@@ -72,6 +72,7 @@ class OrchestratorAgent(BaseAgent):
             MessageType.REQUEST: self._handle_request,
             MessageType.SYNTHESIS: self._handle_synthesis,
             MessageType.POSITION_ALERT: self._handle_position_alert,
+            MessageType.LT_ADVISOR_ALERT: self._handle_lt_advisor_alert,
         }
         handler = handlers.get(message.type, self._handle_unknown)
         handler(message)
@@ -135,6 +136,8 @@ class OrchestratorAgent(BaseAgent):
             self._switch_to_paper()
         elif command == "CATCHUP":
             self._handle_catchup()
+        elif command == "LT_SCAN":
+            self._handle_lt_scan()
 
     def _handle_catchup(self):
         """Run the full morning sequence manually (auth + wake + strategy)."""
@@ -154,6 +157,42 @@ class OrchestratorAgent(BaseAgent):
             self.logger.error(f"Catchup failed: {e}")
             if self.telegram:
                 self.telegram.send_message(f"Catchup failed: {e}")
+
+    def _handle_lt_advisor_alert(self, message: AgentMessage):
+        """Handle LT_Advisor alert — direct passthrough to Telegram.
+
+        No analysis, no agent calls, no decision-making.
+        LT_Advisor already drafted the message.
+        """
+        telegram_text = message.payload.get("telegram_message", "")
+        if telegram_text and telegram_text.strip():
+            if self.telegram:
+                self.telegram.send_message(telegram_text)
+            self.logger.info(
+                "LT Advisor alert forwarded to Telegram. instrument=%s score=%s",
+                message.payload.get("instrument", "unknown"),
+                message.payload.get("score", "?"),
+            )
+        else:
+            self.logger.warning(
+                "LT_ADVISOR_ALERT received with empty message. Not forwarded."
+            )
+
+    def _handle_lt_scan(self):
+        """Run an LT_Advisor scan on demand (from /lt_scan Telegram command)."""
+        if self.telegram:
+            self.telegram.send_message(
+                "Running LT scan... will message you if opportunity found."
+            )
+        import threading
+        from agents.lt_advisor.lt_advisor import LTAdvisor
+        advisor = LTAdvisor(redis=self.redis, db=self.sqlite)
+        threading.Thread(
+            target=advisor.run,
+            args=("MANUAL",),
+            daemon=True,
+            name="lt-scan-manual",
+        ).start()
 
     def _handle_authenticate(self):
         """Force re-authentication with Kite Connect."""

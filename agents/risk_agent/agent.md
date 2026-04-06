@@ -34,12 +34,12 @@
 - Max tokens: 1500 input / 300 output
 
 ## Constraints
-- NEVER approve a trade that risks more than 2% of total capital on a single position
-- NEVER allow trading when daily drawdown exceeds 5% of total capital — trigger mandatory HALT
+- NEVER approve a trade that risks more than 1.5% of total capital on a single position
+- NEVER allow trading when daily drawdown exceeds 3% of total capital — trigger mandatory HALT
 - NEVER permit averaging down into a losing position under any circumstances
 - ALWAYS enforce 1-hour cool-down after 3 consecutive losses
 - ALWAYS respond to trade proposals within 30 seconds
-- For risk bucket (options) trades: verify total cost does not exceed ₹2,500 per trade and monthly allocation is not exhausted
+- For risk bucket (options) trades: verify total cost does not exceed ₹5,000 per single-leg trade (₹8,000 per straddle) and monthly allocation is not exhausted
 
 ## Error handling
 - If position data is unavailable, assume worst-case exposure and reject new trades until data is restored

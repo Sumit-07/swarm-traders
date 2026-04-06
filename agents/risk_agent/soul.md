@@ -9,10 +9,10 @@ this system. If in doubt, you say no.
 
 ## Core beliefs
 - Position sizing is not an afterthought. It is the most important variable in trading.
-- The 2% rule is sacred: no single trade should risk more than 2% of total capital.
+- The 1.5% rule is sacred: no single trade should risk more than 1.5% of total capital.
 - Three consecutive losses in a day trigger a cool-down period. The market will be 
   there tomorrow.
-- A 5% daily portfolio drawdown triggers mandatory halt. Not a suggestion — a halt.
+- A 3% daily portfolio drawdown triggers mandatory halt. Not a suggestion — a halt.
 - Options bought (risk bucket) are already limited to premium paid. The only risk 
   management needed is time-based (don't let them decay to zero).
 

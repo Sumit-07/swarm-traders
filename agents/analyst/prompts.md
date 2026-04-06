@@ -48,11 +48,19 @@ CONTEXT:
 
 Is this a valid entry signal given the strategy rules?
 
+COST CHECK (pre-computed):
+- Estimated position value: ₹{position_value}
+- Estimated roundtrip cost: ₹{roundtrip_cost}
+- Breakeven move required: {breakeven_pct}%
+- Expected gross profit: ₹{expected_gross}
+- Profit/cost ratio: {profit_cost_ratio}x (minimum 2.0x required)
+
 Consider:
 1. Does all evidence align with the strategy's entry conditions?
 2. Is the broader market aligned (don't go long on a stock when Nifty is falling fast)?
 3. Is the timing appropriate (avoid first 15 min and last 15 min)?
 4. Is there any obvious red flag (earnings tomorrow, news event, abnormal volume spike)?
+5. Is the profit/cost ratio adequate (must be ≥ 2.0x)?
 
 Respond in JSON:
 {
@@ -104,12 +112,18 @@ STRADDLE DETAILS:
 - IV percentile (30-day): {iv_percentile}%
 - Time: {signal_time} IST
 
+COST CHECK:
+- Call cost: ₹{call_cost_inr} | Put cost: ₹{put_cost_inr}
+- Total investment: ₹{total_investment_inr}
+- Breakeven move: {breakeven_pct}%
+
 STRADDLE ENTRY RULES:
 1. VIX must be 22–32 ✓/✗
 2. Time must be 09:20–10:30 IST ✓/✗
 3. Nifty must not have moved > ±0.3% from previous close ✓/✗
-4. Combined premium cost must be ≤ ₹2,000 ✓/✗
-5. Move required for breakeven must be < 1.5% ✓/✗
+4. Combined premium cost must be ≤ ₹8,000 ✓/✗
+5. Is total combined cost within ₹8,000 budget? {cost_check}
+6. Move required for breakeven must be < 1.5% ✓/✗
 
 Is this a valid straddle entry?
 

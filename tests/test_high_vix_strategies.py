@@ -15,7 +15,7 @@ class TestStraddleBreakeven:
         from tools.indicators import straddle_breakeven
         result = straddle_breakeven(nifty_spot=22600, call_premium=70, put_premium=65)
         assert result["combined_premium"] == 135
-        assert result["total_cost_inr"] == 135 * 25
+        assert result["total_cost_inr"] == 135 * 65
         assert result["upper_breakeven"] == 22735
         assert result["lower_breakeven"] == 22465
         assert abs(result["move_required_pct"] - 0.597) < 0.01
@@ -142,12 +142,12 @@ class TestStraddleBacktest:
     def test_straddle_pnl_profit_on_surge(self):
         from backtesting.strategies.straddle_backtest import straddle_pnl
         result = straddle_pnl(entry_combined_premium=100, exit_combined_premium=220)
-        assert result == 120 * 25  # ₹3,000
+        assert result == 120 * 65  # ₹7,800
 
     def test_straddle_pnl_loss_on_flat(self):
         from backtesting.strategies.straddle_backtest import straddle_pnl
         result = straddle_pnl(entry_combined_premium=100, exit_combined_premium=60)
-        assert result == -40 * 25  # -₹1,000
+        assert result == -40 * 65  # -₹2,600
 
     def test_compute_atm_premium(self):
         from backtesting.strategies.straddle_backtest import compute_atm_premium

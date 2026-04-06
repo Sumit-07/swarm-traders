@@ -52,13 +52,13 @@ class ComplianceAgent(BaseAgent):
         # Check options trade limit
         if trade.get("bucket") == "risk":
             cost = trade.get("fill_price", 0) * trade.get("quantity", 0)
-            if cost > RISK_LIMITS["max_options_trade"]:
+            if cost > RISK_LIMITS["max_options_trade_inr"]:
                 self._flag_violation(
                     trade_id=trade.get("order_id", ""),
                     rule="max_options_trade",
                     details=(
                         f"Options trade cost INR {cost:.0f} exceeds "
-                        f"limit of INR {RISK_LIMITS['max_options_trade']}"
+                        f"limit of INR {RISK_LIMITS['max_options_trade_inr']}"
                     ),
                     severity="HIGH",
                     agent="execution_agent",

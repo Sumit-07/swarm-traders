@@ -59,7 +59,7 @@ class DataAgent(BaseAgent):
                 data = self.market_data.get_index_data(index)
                 snapshot[index.lower()] = data
                 ltp = data.get("ltp", data.get("last_price", "?"))
-                self.logger.info(f"{index}: LTP={ltp}")
+                self.logger.debug(f"{index}: LTP={ltp}")
             except Exception as e:
                 self.logger.warning(f"Failed to fetch {index}: {e}")
                 snapshot[index.lower()] = {"error": str(e)}
@@ -67,7 +67,7 @@ class DataAgent(BaseAgent):
         snapshot["timestamp"] = datetime.now(IST).isoformat()
         self.redis.set_market_data("data:market_snapshot", snapshot, ttl=120)
         self._last_action = "pulled market snapshot"
-        self.logger.info("Market snapshot saved to Redis.")
+        self.logger.debug("Market snapshot saved to Redis.")
 
     def pull_watchlist_data(self):
         """Fetch OHLCV and calculate indicators for watchlist symbols."""

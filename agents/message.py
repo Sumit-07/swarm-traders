@@ -25,6 +25,7 @@ class MessageType(str, Enum):
     HEARTBEAT = "HEARTBEAT"
     SYNTHESIS = "SYNTHESIS"
     POSITION_ALERT = "POSITION_ALERT"
+    LT_ADVISOR_ALERT = "LT_ADVISOR_ALERT"
 
 
 class Priority(str, Enum):

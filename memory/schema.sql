@@ -184,3 +184,26 @@ CREATE TABLE IF NOT EXISTS monitor_ticks (
 
 CREATE INDEX IF NOT EXISTS idx_monitor_alerts_trade
     ON monitor_alerts(trade_id, alerted_at DESC);
+
+-- LT Advisor log
+CREATE TABLE IF NOT EXISTS lt_advisor_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    logged_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    run_type        TEXT NOT NULL,
+    vix_at_run      REAL,
+    action_taken    TEXT NOT NULL,
+    silence_reason  TEXT,
+    instrument      TEXT,
+    score           INTEGER,
+    alert_type      TEXT DEFAULT 'OPPORTUNITY',
+    threshold_crossed INTEGER,
+    telegram_sent   BOOLEAN DEFAULT FALSE,
+    llm_called      BOOLEAN DEFAULT FALSE
+);
+
+CREATE INDEX IF NOT EXISTS idx_lt_log_date
+    ON lt_advisor_log(logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lt_log_action
+    ON lt_advisor_log(action_taken, logged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lt_log_alert_type
+    ON lt_advisor_log(alert_type, logged_at DESC);

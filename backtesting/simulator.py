@@ -12,7 +12,7 @@ Enforces realistic execution rules to prevent look-ahead bias:
 from datetime import time
 from dataclasses import dataclass, field
 
-from config import SIMULATION
+from config import SIMULATION, STATUTORY_COSTS
 
 
 @dataclass
@@ -43,7 +43,10 @@ class Trade:
 
 @dataclass
 class SimulatorConfig:
-    """Configuration for backtest simulation."""
+    """Configuration for backtest simulation.
+
+    Uses STATUTORY_COSTS (April 2026 rates) with SIMULATION compat layer.
+    """
     slippage_pct: float = SIMULATION["slippage_pct"]
     brokerage_per_order: float = SIMULATION["brokerage_per_order"]
     stt_delivery_buy_pct: float = SIMULATION["stt_delivery_buy_pct"]

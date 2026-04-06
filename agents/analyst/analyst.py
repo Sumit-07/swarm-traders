@@ -14,6 +14,12 @@ from agents.base_agent import BaseAgent
 from agents.message import (
     AgentMessage, MessageType, Priority, TradeProposal,
 )
+from config import CAPITAL, RISK_LIMITS
+from tools.cost_estimator import (
+    estimate_equity_roundtrip_cost,
+    estimate_options_roundtrip_cost,
+    is_trade_viable,
+)
 
 
 class AnalystAgent(BaseAgent):
@@ -73,6 +79,12 @@ class AnalystAgent(BaseAgent):
 
             signal = self._check_entry_conditions(symbol, tick_data, strategy)
             if signal:
+                # Pre-LLM cost check — reject if profit < 2× costs
+                cost_viable, cost_reason = self._validate_signal_cost(signal)
+                if not cost_viable:
+                    self.logger.info(f"Signal rejected by cost check for {symbol}: {cost_reason}")
+                    continue
+
                 # Validate signal with LLM for additional context
                 validated = self._validate_signal_with_llm(signal, tick_data)
                 if validated and validated.get("signal_valid", False):
@@ -102,15 +114,16 @@ class AnalystAgent(BaseAgent):
         entry_conditions = self._strategy_config.get("entry_conditions", {})
         direction = entry_conditions.get("direction", "LONG")
 
-        # RSI Mean Reversion: buy when RSI < 32
-        if strategy == "RSI_MEAN_REVERSION" and direction == "LONG":
+        # RSI Mean Reversion: LONG when RSI < 32, SHORT when RSI > 68
+        if strategy == "RSI_MEAN_REVERSION":
             try:
                 threshold = float(entry_conditions.get("entry_threshold", 32))
             except (ValueError, TypeError):
                 threshold = 32
+            short_threshold = entry_conditions.get("short_threshold", 68)
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
-            if rsi < threshold:
+            if rsi < threshold and direction in ("LONG", "BOTH"):
                 if needs_volume and volume_ratio and volume_ratio < 1.2:
                     return None
                 return {
@@ -121,12 +134,91 @@ class AnalystAgent(BaseAgent):
                     "rsi": rsi,
                     "volume_ratio": volume_ratio,
                 }
+            if rsi > short_threshold and direction in ("SHORT", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < 1.2:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "RSI_OVERBOUGHT",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "volume_ratio": volume_ratio,
+                }
 
-        # Opening Range Breakout
+        # VWAP Reversion: LONG when price far below VWAP, SHORT when far above
+        if strategy == "VWAP_REVERSION":
+            vwap = tick_data.get("vwap")
+            if vwap is None or vwap == 0:
+                return None
+            vwap_dev_pct = (close - vwap) / vwap * 100
+
+            try:
+                threshold = float(entry_conditions.get("entry_threshold", -1.2))
+            except (ValueError, TypeError):
+                threshold = -1.2
+
+            if vwap_dev_pct < threshold and direction in ("LONG", "BOTH"):
+                return {
+                    "symbol": symbol,
+                    "direction": "LONG",
+                    "signal_type": "VWAP_BELOW",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "vwap": vwap,
+                    "vwap_deviation_pct": round(vwap_dev_pct, 2),
+                    "volume_ratio": volume_ratio,
+                }
+            if vwap_dev_pct > abs(threshold) and direction in ("SHORT", "BOTH"):
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "VWAP_ABOVE",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "vwap": vwap,
+                    "vwap_deviation_pct": round(vwap_dev_pct, 2),
+                    "volume_ratio": volume_ratio,
+                }
+
+        # Opening Range Breakout: LONG on upside breakout, SHORT on downside
         if strategy == "OPENING_RANGE_BREAKOUT":
-            pass
+            orb_high = tick_data.get("orb_high")
+            orb_low = tick_data.get("orb_low")
+            if orb_high is None or orb_low is None:
+                return None
+            needs_volume = entry_conditions.get("volume_confirmation", True)
+            vol_threshold = entry_conditions.get("volume_threshold", 1.5)
+
+            if close > orb_high and direction in ("LONG", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < vol_threshold:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "LONG",
+                    "signal_type": "ORB_BREAKOUT_UP",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "volume_ratio": volume_ratio,
+                }
+            if close < orb_low and direction in ("SHORT", "BOTH"):
+                if needs_volume and volume_ratio and volume_ratio < vol_threshold:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "SHORT",
+                    "signal_type": "ORB_BREAKOUT_DOWN",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "orb_high": orb_high,
+                    "orb_low": orb_low,
+                    "volume_ratio": volume_ratio,
+                }
 
         # ADX-based strategies: SWING_MOMENTUM and VOLATILITY_ADJUSTED_SWING
+        # These remain LONG only — swing shorts carry overnight risk
         if strategy in ("SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING"):
             adx = tick_data.get("adx")
             if adx is None:
@@ -137,7 +229,7 @@ class AnalystAgent(BaseAgent):
                 threshold = 28 if strategy == "VOLATILITY_ADJUSTED_SWING" else 25
             needs_volume = entry_conditions.get("volume_confirmation", True)
 
-            if adx > threshold and direction == "LONG":
+            if adx > threshold and direction in ("LONG", "BOTH"):
                 # RSI should be in momentum range (55-70)
                 if rsi is not None and not (55 <= rsi <= 70):
                     return None
@@ -155,6 +247,44 @@ class AnalystAgent(BaseAgent):
 
         return None
 
+    def _validate_signal_cost(self, signal: dict) -> tuple[bool, str]:
+        """Pre-LLM cost check. Rejects signals where expected profit < 2x costs."""
+        entry_price = signal.get("entry_price", 0)
+        if entry_price <= 0:
+            return False, "Entry price is zero or negative"
+
+        exit_conditions = self._strategy_config.get("exit_conditions", {})
+        target_pct = (
+            exit_conditions.get("target_pct")
+            or self._strategy_config.get("target_pct", 2.0)
+        )
+        stop_pct = (
+            exit_conditions.get("stop_loss_pct")
+            or self._strategy_config.get("stop_loss_pct", 1.5)
+        )
+
+        # Estimate position size (same logic as _submit_trade_proposal)
+        capital = CAPITAL["conservative_bucket"]
+        max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
+        risk_per_share = entry_price * stop_pct / 100
+        quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
+
+        strategy_name = self._strategy_config.get("strategy_name", "")
+        if strategy_name == "VOLATILITY_ADJUSTED_SWING":
+            quantity = max(1, int(quantity * 0.57))
+
+        position_value = entry_price * quantity
+        expected_gross = position_value * (target_pct / 100)
+
+        cost = estimate_equity_roundtrip_cost(
+            position_value_inr=position_value,
+            is_intraday=strategy_name not in (
+                "SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING"
+            ),
+        )
+
+        return is_trade_viable(expected_gross, cost)
+
     def _validate_signal_with_llm(self, signal: dict,
                                    tick_data: dict) -> dict | None:
         """Use LLM to validate a signal with broader market context."""
@@ -165,7 +295,7 @@ class AnalystAgent(BaseAgent):
             result = self.call_llm("PROMPT_SIGNAL_VALIDATION", {
                 "strategy_name": self._strategy_config.get("strategy_name", ""),
                 "strategy_confidence": self._strategy_config.get("confidence", "MEDIUM"),
-                "available_capital": self._strategy_config.get("available_capital", 25000),
+                "available_capital": self._strategy_config.get("available_capital", CAPITAL["conservative_bucket"]),
                 "symbol": signal["symbol"],
                 "signal_type": signal["direction"],
                 "trigger_indicator": signal.get("signal_type", "RSI"),
@@ -211,8 +341,7 @@ class AnalystAgent(BaseAgent):
         entry_price = signal["entry_price"]
         strategy_name = self._strategy_config.get("strategy_name", "")
 
-        # Position sizing: use risk-based sizing (2% capital at risk)
-        from config import CAPITAL, RISK_LIMITS
+        # Position sizing: use risk-based sizing (1.5% capital at risk)
         capital = CAPITAL["conservative_bucket"]
         max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
         risk_per_share = entry_price * stop_pct / 100
@@ -223,10 +352,21 @@ class AnalystAgent(BaseAgent):
             quantity = max(1, int(quantity * 0.57))
 
         # Build analyst note based on signal type
-        if signal.get("signal_type") == "ADX_MOMENTUM":
+        signal_type = signal.get("signal_type", "")
+        if signal_type == "ADX_MOMENTUM":
             note = (
                 f"ADX at {signal.get('adx', 0):.1f}, RSI at {signal.get('rsi', 0):.1f} "
                 f"with volume {signal.get('volume_ratio', 0):.1f}x average"
+            )
+        elif "VWAP" in signal_type:
+            note = (
+                f"VWAP deviation {signal.get('vwap_deviation_pct', 0):.2f}%, "
+                f"RSI at {signal.get('rsi', 0):.1f}"
+            )
+        elif "ORB" in signal_type:
+            note = (
+                f"ORB {'upside' if signal['direction'] == 'LONG' else 'downside'} breakout, "
+                f"volume {signal.get('volume_ratio', 0):.1f}x average"
             )
         else:
             note = (
@@ -234,14 +374,23 @@ class AnalystAgent(BaseAgent):
                 f"volume {signal.get('volume_ratio', 0):.1f}x average"
             )
 
+        # Stop/target: flip for SHORT direction
+        is_short = signal["direction"] == "SHORT"
+        if is_short:
+            stop_loss = round(entry_price * (1 + stop_pct / 100), 2)
+            target = round(entry_price * (1 - target_pct / 100), 2)
+        else:
+            stop_loss = round(entry_price * (1 - stop_pct / 100), 2)
+            target = round(entry_price * (1 + target_pct / 100), 2)
+
         proposal = TradeProposal(
             symbol=signal["symbol"],
             direction=signal["direction"],
             signal_type=signal["signal_type"],
             entry_price=entry_price,
             quantity_suggested=quantity,
-            stop_loss=round(entry_price * (1 - stop_pct / 100), 2),
-            target=round(entry_price * (1 + target_pct / 100), 2),
+            stop_loss=stop_loss,
+            target=target,
             signal_confidence="MEDIUM",
             indicator_snapshot={
                 "rsi": signal.get("rsi"),

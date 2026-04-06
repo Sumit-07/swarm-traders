@@ -16,10 +16,10 @@ TODAY'S TRADES:
 {trades_json}
 
 RISK RULES THAT WERE IN EFFECT TODAY:
-- Max single trade risk: 2% = ₹{max_single_risk}
-- Max daily loss: 5% = ₹{max_daily_loss}
+- Max single trade risk: 1.5% = ₹{max_single_risk}
+- Max daily loss: 3% = ₹{max_daily_loss}
 - Max simultaneous positions: {max_positions}
-- Options trade max: ₹2,500 per trade
+- Options trade max: ₹5,000 per single-leg, ₹8,000 per straddle
 - Intraday positions must close by: 3:20 PM IST
 - Averaging down: Not permitted
 

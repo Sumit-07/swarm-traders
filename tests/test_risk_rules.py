@@ -10,17 +10,17 @@ from config import CAPITAL, RISK_LIMITS
 class TestRiskLimitValues:
     """Verify risk limits are correctly configured."""
 
-    def test_single_trade_risk_is_2_percent(self):
-        assert RISK_LIMITS["max_single_trade_risk_pct"] == 0.02
+    def test_single_trade_risk_is_1_5_percent(self):
+        assert RISK_LIMITS["max_single_trade_risk_pct"] == 0.015
 
-    def test_daily_loss_is_5_percent(self):
-        assert RISK_LIMITS["max_daily_loss_pct"] == 0.05
+    def test_daily_loss_is_3_percent(self):
+        assert RISK_LIMITS["max_daily_loss_pct"] == 0.03
 
     def test_averaging_down_forbidden(self):
         assert RISK_LIMITS["averaging_down_permitted"] is False
 
-    def test_options_max_trade_is_2500(self):
-        assert RISK_LIMITS["max_options_trade"] == 2500
+    def test_options_max_trade_is_5000(self):
+        assert RISK_LIMITS["max_options_trade_inr"] == 5000
 
     def test_consecutive_loss_cooldown_is_3(self):
         assert RISK_LIMITS["consecutive_loss_cooldown"] == 3
@@ -29,8 +29,8 @@ class TestRiskLimitValues:
         assert RISK_LIMITS["cooldown_duration_minutes"] == 60
 
     def test_max_simultaneous_positions(self):
-        assert RISK_LIMITS["max_simultaneous_positions"] == 3
-        assert RISK_LIMITS["max_risk_positions"] == 2
+        assert RISK_LIMITS["max_simultaneous_positions"] == 4
+        assert RISK_LIMITS["max_risk_positions"] == 3
 
     def test_options_stop_loss_is_60_percent(self):
         assert RISK_LIMITS["options_stop_loss_pct"] == 0.60
@@ -42,7 +42,7 @@ class TestRiskLimitValues:
         assert RISK_LIMITS["require_human_approval_days"] == 30
 
     def test_auto_approve_threshold(self):
-        assert RISK_LIMITS["auto_approve_threshold"] == 3000
+        assert RISK_LIMITS["auto_approve_threshold_inr"] == 6000
         assert RISK_LIMITS["auto_approve_confidence"] == "HIGH"
 
 
@@ -52,16 +52,16 @@ class TestRiskCalculations:
     def test_max_single_trade_risk_conservative(self):
         capital = CAPITAL["conservative_bucket"]
         max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
-        assert max_risk == 500  # 2% of 25000
+        assert max_risk == 750  # 1.5% of 50000
 
     def test_max_daily_loss_conservative(self):
         capital = CAPITAL["conservative_bucket"]
         max_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
-        assert max_loss == 1250  # 5% of 25000
+        assert max_loss == 1500  # 3% of 50000
 
     def test_options_trade_within_risk_bucket(self):
         monthly_budget = CAPITAL["risk_bucket_monthly"]
-        max_per_trade = RISK_LIMITS["max_options_trade"]
+        max_per_trade = RISK_LIMITS["max_options_trade_inr"]
         # Should be able to do at least 4 trades per month
         assert monthly_budget / max_per_trade >= 4
 

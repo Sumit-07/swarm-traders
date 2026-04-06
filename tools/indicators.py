@@ -158,7 +158,7 @@ def straddle_breakeven(
     nifty_spot: float,
     call_premium: float,
     put_premium: float,
-    lot_size: int = 25,
+    lot_size: int = 65,
 ) -> dict:
     """Calculate straddle break-even points.
 
@@ -166,7 +166,7 @@ def straddle_breakeven(
         nifty_spot:    Current Nifty price
         call_premium:  ATM call premium in points
         put_premium:   ATM put premium in points
-        lot_size:      Nifty lot size (25 as of 2025)
+        lot_size:      Nifty lot size (65 as of January 2026)
 
     Returns:
         Dict with combined_premium, total_cost_inr, upper/lower breakeven,
