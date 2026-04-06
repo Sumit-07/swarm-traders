@@ -79,8 +79,8 @@ def render():
             return "background-color: #e74c3c44"
         return ""
 
-    styled = df.style.applymap(highlight_rsi, subset=["RSI"])
-    styled = styled.applymap(highlight_vwap, subset=["VWAP Dev %"])
+    styled = df.style.map(highlight_rsi, subset=["RSI"])
+    styled = styled.map(highlight_vwap, subset=["VWAP Dev %"])
 
     st.dataframe(styled, use_container_width=True, hide_index=True, height=600)
 

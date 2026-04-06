@@ -74,7 +74,7 @@ def render():
                 return ""
             return "color: #2ecc71" if val >= 0 else "color: #e74c3c"
 
-        styled = df[available].style.applymap(color_pnl, subset=["unrealized_pnl"])
+        styled = df[available].style.map(color_pnl, subset=["unrealized_pnl"])
         st.dataframe(styled, use_container_width=True, hide_index=True)
     else:
         st.dataframe(df[available], use_container_width=True, hide_index=True)
