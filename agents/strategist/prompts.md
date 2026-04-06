@@ -89,7 +89,7 @@ Respond ONLY in this JSON format:
 {
   "strategy": "STRATEGY_NAME",
   "rationale": "2–3 sentence explanation a non-trader can understand",
-  "watchlist": ["SYMBOL1", "SYMBOL2", ...],  // max 5 symbols
+  "watchlist": ["SYMBOL1", "SYMBOL2", ...],  // pick up to 20 from Nifty 50 large caps
   "entry_conditions": {
     "indicator": "RSI | VWAP | ORB | ADX | price_action",
     "entry_threshold": 0.0,   // MUST be a number (e.g. 32 for RSI, 28 for ADX)

@@ -204,29 +204,52 @@ class AnalystAgent(BaseAgent):
             self.logger.info("Max 2 pending signals — skipping new signal")
             return
 
+        # Get stop/target — check exit_conditions dict first, then top-level keys
         exit_conditions = self._strategy_config.get("exit_conditions", {})
-        target_pct = exit_conditions.get("target_pct", 2.0)
-        stop_pct = exit_conditions.get("stop_loss_pct", 1.5)
+        target_pct = exit_conditions.get("target_pct") or self._strategy_config.get("target_pct", 2.0)
+        stop_pct = exit_conditions.get("stop_loss_pct") or self._strategy_config.get("stop_loss_pct", 1.5)
         entry_price = signal["entry_price"]
+        strategy_name = self._strategy_config.get("strategy_name", "")
+
+        # Position sizing: use risk-based sizing (2% capital at risk)
+        from config import CAPITAL, RISK_LIMITS
+        capital = CAPITAL["conservative_bucket"]
+        max_risk = capital * RISK_LIMITS["max_single_trade_risk_pct"]
+        risk_per_share = entry_price * stop_pct / 100
+        quantity = max(1, int(max_risk / risk_per_share)) if risk_per_share > 0 else 1
+
+        # VAS: apply 0.57× position size modifier
+        if strategy_name == "VOLATILITY_ADJUSTED_SWING":
+            quantity = max(1, int(quantity * 0.57))
+
+        # Build analyst note based on signal type
+        if signal.get("signal_type") == "ADX_MOMENTUM":
+            note = (
+                f"ADX at {signal.get('adx', 0):.1f}, RSI at {signal.get('rsi', 0):.1f} "
+                f"with volume {signal.get('volume_ratio', 0):.1f}x average"
+            )
+        else:
+            note = (
+                f"RSI at {signal.get('rsi', 0):.1f} with "
+                f"volume {signal.get('volume_ratio', 0):.1f}x average"
+            )
 
         proposal = TradeProposal(
             symbol=signal["symbol"],
             direction=signal["direction"],
             signal_type=signal["signal_type"],
             entry_price=entry_price,
-            quantity_suggested=1,  # Risk agent will size properly
+            quantity_suggested=quantity,
             stop_loss=round(entry_price * (1 - stop_pct / 100), 2),
             target=round(entry_price * (1 + target_pct / 100), 2),
             signal_confidence="MEDIUM",
             indicator_snapshot={
                 "rsi": signal.get("rsi"),
+                "adx": signal.get("adx"),
                 "volume_ratio": signal.get("volume_ratio"),
             },
             bucket=self._strategy_config.get("bucket", "conservative"),
-            analyst_note=(
-                f"RSI at {signal.get('rsi', 0):.1f} with "
-                f"volume {signal.get('volume_ratio', 0):.1f}x average"
-            ),
+            analyst_note=note,
         )
 
         self._pending_signals.append(proposal.proposal_id)
@@ -267,6 +290,8 @@ class AnalystAgent(BaseAgent):
                 "watchlist": strategy.get("watchlist", []),
                 "entry_conditions": strategy.get("entry_conditions", {}),
                 "exit_conditions": strategy.get("exit_conditions", {}),
+                "target_pct": strategy.get("exit_conditions", {}).get("target_pct") or strategy.get("target_pct"),
+                "stop_loss_pct": strategy.get("exit_conditions", {}).get("stop_loss_pct") or strategy.get("stop_loss_pct"),
                 "bucket": "conservative",
             }
         self._scan_watchlist()

@@ -127,6 +127,14 @@ ALLOWED_COMMUNICATION_PATHS = {
     "position_monitor": ["orchestrator"],
 }
 
+# --- Default Watchlist (Nifty 50 large caps, high liquidity) ---
+DEFAULT_WATCHLIST = [
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS",
+    "LT", "SBIN", "BAJFINANCE", "ITC", "TATAMOTORS",
+    "AXISBANK", "KOTAKBANK", "HINDUNILVR", "BHARTIARTL", "MARUTI",
+    "SUNPHARMA", "WIPRO", "TATASTEEL", "NTPC", "POWERGRID",
+]
+
 # --- Strategy Library ---
 CONSERVATIVE_STRATEGIES = [
     "RSI_MEAN_REVERSION",

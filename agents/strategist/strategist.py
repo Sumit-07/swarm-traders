@@ -8,7 +8,7 @@ from datetime import datetime
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority, StrategyConfig
-from config import CONSERVATIVE_STRATEGIES
+from config import CONSERVATIVE_STRATEGIES, DEFAULT_WATCHLIST
 
 
 class StrategistAgent(BaseAgent):
@@ -145,7 +145,7 @@ class StrategistAgent(BaseAgent):
         elif vix >= 22:
             return {"strategy": "VOLATILITY_ADJUSTED_SWING",
                     "rationale": f"High VIX ({vix}) — swing with wider stops and reduced size",
-                    "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+                    "watchlist": DEFAULT_WATCHLIST,
                     "entry_conditions": {"indicator": "ADX", "entry_threshold": "28",
                                          "volume_confirmation": True, "direction": "LONG"},
                     "exit_conditions": {"target_pct": 5.5, "stop_loss_pct": 3.5,
@@ -158,7 +158,7 @@ class StrategistAgent(BaseAgent):
                     "watchlist": ["NIFTY"], "confidence": "MEDIUM"}
         return {"strategy": "RSI_MEAN_REVERSION",
                 "rationale": f"Stable VIX ({vix})",
-                "watchlist": ["RELIANCE", "HDFC", "INFY", "TCS", "WIPRO"],
+                "watchlist": DEFAULT_WATCHLIST,
                 "entry_conditions": {"indicator": "RSI", "entry_threshold": "32",
                                      "volume_confirmation": True, "direction": "LONG"},
                 "exit_conditions": {"target_pct": 2.0, "stop_loss_pct": 1.5,

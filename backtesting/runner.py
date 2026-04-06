@@ -14,7 +14,7 @@ import pandas as pd
 from backtesting.data_loader import DataLoader
 from backtesting.metrics import calculate_metrics, check_gate_criteria
 from backtesting.simulator import BacktestSimulator, Trade
-from config import BACKTEST_GATE_CRITERIA, CAPITAL
+from config import BACKTEST_GATE_CRITERIA, CAPITAL, DEFAULT_WATCHLIST
 from tools.indicators import calculate_all
 from tools.logger import get_agent_logger
 
@@ -27,7 +27,7 @@ REPORTS_DIR = Path("backtesting/reports")
 
 STRATEGY_CONFIGS = {
     "RSI_MEAN_REVERSION": {
-        "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+        "watchlist": DEFAULT_WATCHLIST,
         "direction": "BOTH",
         "entry_indicator": "rsi",
         "entry_threshold": 32,       # RSI < 32 to enter
@@ -40,7 +40,7 @@ STRATEGY_CONFIGS = {
         "max_trades_per_day": 2,
     },
     "VWAP_REVERSION": {
-        "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+        "watchlist": DEFAULT_WATCHLIST,
         "direction": "BOTH",
         "entry_indicator": "vwap_deviation",
         "entry_threshold": -1.2,     # price > 1.2% below VWAP
@@ -52,7 +52,7 @@ STRATEGY_CONFIGS = {
         "max_trades_per_day": 2,
     },
     "OPENING_RANGE_BREAKOUT": {
-        "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+        "watchlist": DEFAULT_WATCHLIST,
         "direction": "BOTH",
         "entry_indicator": "orb",
         "orb_bars": 3,               # first 15 min = 3 x 5-min bars
@@ -64,7 +64,7 @@ STRATEGY_CONFIGS = {
         "max_trades_per_day": 1,
     },
     "SWING_MOMENTUM": {
-        "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+        "watchlist": DEFAULT_WATCHLIST,
         "direction": "LONG",
         "entry_indicator": "adx",
         "entry_threshold": 25,
@@ -109,7 +109,7 @@ STRATEGY_CONFIGS = {
         "vix_min": 22.0,
         "vix_max": 32.0,
         "direction": "LONG",
-        "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+        "watchlist": DEFAULT_WATCHLIST,
         "entry_indicator": "adx",
         "entry_threshold": 28,
         "entry_compare": "above",
