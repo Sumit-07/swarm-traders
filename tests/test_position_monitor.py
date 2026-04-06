@@ -49,7 +49,9 @@ def agent(mock_redis, db):
 @pytest.fixture
 def sample_position():
     """Position dict as it exists in Redis state:positions."""
-    entry_time = datetime.now(IST) - timedelta(minutes=30)
+    # Use _market_hours_now() as reference so entry is always 30 min before fake "now"
+    ref_time = _market_hours_now()
+    entry_time = ref_time - timedelta(minutes=30)
     return {
         "trade_id": "T001",
         "symbol": "RELIANCE",
@@ -92,8 +94,6 @@ def _insert_trade(db, trade_id="T001", strategy="RSI_MEAN_REVERSION"):
 
 def test_grace_period_suppresses_alert(agent, sample_position, sample_tick, db):
     """Position entered 3 min ago, RSI_MEAN_REVERSION grace = 10 min → no alert."""
-    entry_time = datetime.now(IST) - timedelta(minutes=3)
-    sample_position["entry_time"] = entry_time.isoformat()
     _insert_trade(db, "T001", "RSI_MEAN_REVERSION")
 
     now = _market_hours_now()
@@ -153,7 +153,7 @@ def test_adverse_move_triggers_alert_intraday(agent, sample_position, sample_tic
 
 def test_adverse_move_no_alert_swing_below_threshold(agent, db):
     """SWING_MOMENTUM threshold 1.5%, price down 1.0% → no alert."""
-    entry_time = (datetime.now(IST) - timedelta(hours=2)).isoformat()
+    entry_time = (_market_hours_now() - timedelta(hours=2)).isoformat()
     position = {
         "trade_id": "T002", "symbol": "INFY", "direction": "LONG",
         "entry_price": 1500.0, "quantity": 5, "stop_loss": 1470.0,
@@ -214,7 +214,7 @@ def test_favorable_move_triggers_alert(agent, sample_position, db):
 
 def test_options_monitors_premium_not_price(agent, db):
     """Options strategy checks premium decay, not adverse_move_pct."""
-    entry_time = (datetime.now(IST) - timedelta(minutes=15)).isoformat()
+    entry_time = (_market_hours_now() - timedelta(minutes=15)).isoformat()
     position = {
         "trade_id": "T003", "symbol": "NIFTY24500CE", "direction": "LONG",
         "entry_price": 200.0, "entry_premium": 200.0,
@@ -241,7 +241,7 @@ def test_options_monitors_premium_not_price(agent, db):
 
 def test_options_no_alert_on_underlying_move_alone(agent, db):
     """Options premium stable at -10%, no alert despite big underlying move."""
-    entry_time = (datetime.now(IST) - timedelta(minutes=15)).isoformat()
+    entry_time = (_market_hours_now() - timedelta(minutes=15)).isoformat()
     position = {
         "trade_id": "T004", "symbol": "NIFTY24500CE", "direction": "LONG",
         "entry_price": 200.0, "entry_premium": 200.0,
@@ -289,7 +289,9 @@ def test_time_warning_fires_at_threshold(agent, sample_position, db):
 
 def test_time_warning_does_not_fire_for_swing(agent, db):
     """SWING_MOMENTUM has time_warning_minutes=0, so no time warning."""
-    entry_time = (datetime.now(IST) - timedelta(hours=4)).isoformat()
+    # Use 14:40 as "now" for this test, entry 4 hours before that
+    ref_time = datetime.now(IST).replace(hour=14, minute=40, second=0, microsecond=0)
+    entry_time = (ref_time - timedelta(hours=4)).isoformat()
     position = {
         "trade_id": "T005", "symbol": "TATASTEEL", "direction": "LONG",
         "entry_price": 150.0, "quantity": 50, "stop_loss": 145.0,
