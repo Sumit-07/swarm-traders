@@ -188,6 +188,9 @@ SYSTEM_MODES = {
 }
 VALID_MODES = ("PAPER", "LIVE", "HALTED", "REVIEW")
 
+# Date the system was first deployed — used for human-approval-days countdown
+SYSTEM_START_DATE = "2026-04-07"
+
 # --- Agent Roster ---
 AGENT_IDS = [
     "orchestrator",

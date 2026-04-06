@@ -25,10 +25,42 @@ class ExecutionAgent(BaseAgent):
         self._processed_orders: set = set()  # deduplication
 
     def on_start(self):
+        self._reload_paper_positions()
         self.logger.info("Execution Agent ready")
 
     def on_stop(self):
         pass
+
+    def _reload_paper_positions(self):
+        """Reload open paper positions from Redis into the simulator on restart.
+
+        Prevents phantom positions: Redis still has positions after restart
+        but simulator's in-memory dict is empty.
+        """
+        positions_data = self.redis.get_state("state:positions") or {}
+        positions = positions_data.get("positions", [])
+        loaded = 0
+        for pos in positions:
+            if pos.get("status") != "OPEN":
+                continue
+            order_id = pos.get("trade_id") or pos.get("order_id", "")
+            if not order_id:
+                continue
+            self.simulator._open_positions[order_id] = {
+                "order_id": order_id,
+                "symbol": pos["symbol"],
+                "direction": pos.get("direction", "LONG"),
+                "entry_price": pos.get("entry_price", 0),
+                "quantity": pos.get("quantity", 0),
+                "stop_loss": pos.get("stop_loss", 0),
+                "target": pos.get("target", 0),
+                "bucket": pos.get("bucket", "conservative"),
+                "entry_time": pos.get("entry_time", ""),
+                "status": "OPEN",
+            }
+            loaded += 1
+        if loaded:
+            self.logger.info(f"Reloaded {loaded} open paper position(s) from Redis")
 
     def on_message(self, message: AgentMessage):
         if message.type == MessageType.COMMAND:

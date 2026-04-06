@@ -49,6 +49,7 @@ class RiskAgent(BaseAgent):
         Uses shared _review_proposal_data for the checks, then adds LLM review
         and sends messages to orchestrator and analyst.
         """
+        self._refresh_todays_pnl()
         proposal = message.payload
         symbol = proposal.get("symbol", "")
         entry_price = proposal.get("entry_price", 0)
@@ -269,8 +270,19 @@ class RiskAgent(BaseAgent):
 
         return decision_payload
 
+    def _refresh_todays_pnl(self):
+        """Load today's realized PnL from SQLite (fallback for when no UPDATE_PNL message received)."""
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        try:
+            pnl_data = self.sqlite.get_daily_pnl(date=today)
+            if pnl_data:
+                self._todays_pnl = pnl_data.get("total_pnl", 0) or 0
+        except Exception as e:
+            self.logger.error(f"Failed to refresh PnL: {e}")
+
     def run(self, state: dict) -> dict:
         """LangGraph node: review pending signals through 5 risk checks."""
+        self._refresh_todays_pnl()
         pending = state.get("pending_signals", [])
         approved = []
         rejected = []

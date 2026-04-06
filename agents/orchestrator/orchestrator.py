@@ -886,6 +886,18 @@ class OrchestratorAgent(BaseAgent):
         state["agent_statuses"] = agents
         state["system_mode"] = self._get_system_mode()
 
+        # Persist strategy to Redis if present in state (graph path)
+        conservative = state.get("conservative_strategy")
+        if conservative and isinstance(conservative, dict):
+            self.redis.set_state("state:active_strategy", {
+                "strategy": conservative.get("strategy", ""),
+                "bucket": "conservative",
+                "regime": conservative.get("regime", ""),
+                "confidence": conservative.get("confidence", ""),
+                "rationale": conservative.get("rationale", ""),
+                "set_at": datetime.now(IST).isoformat(),
+            })
+
         # Phase-specific actions
         if phase == "morning_briefing":
             self.generate_morning_briefing(state)

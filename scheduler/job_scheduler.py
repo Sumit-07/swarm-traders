@@ -378,16 +378,52 @@ class SwarmScheduler:
             logger.error(f"Signal loop failed: {e}")
 
     def _run_position_monitor(self):
-        """Every 5 min during market hours — check open positions for threshold breaches."""
-        monitor = self.agents.get("position_monitor")
-        if not monitor:
+        """Every 5 min during market hours — check positions for threshold breaches + paper exits."""
+        # 1. Agent-based threshold monitoring (P&L alerts to orchestrator)
+        monitor_agent = self.agents.get("position_monitor")
+        if monitor_agent:
+            try:
+                alerts = monitor_agent.monitor_positions()
+                if alerts:
+                    logger.info(f"Position monitor: {alerts} alert(s) sent")
+            except Exception as e:
+                logger.error(f"Position monitor agent failed: {e}")
+
+        # 2. Paper position stop/target exit checks (via PositionMonitor tool)
+        orchestrator = self.agents.get("orchestrator")
+        execution = self.agents.get("execution_agent")
+        if not orchestrator or not execution:
             return
+
+        simulator = getattr(execution, "simulator", None)
+        if not simulator or not simulator.open_positions:
+            return
+
+        from tools.position_monitor import PositionMonitor
+        from tools.market_data import get_live_quote
+
+        broker = getattr(orchestrator, "broker", None)
+        tool = PositionMonitor(
+            redis_store=orchestrator.redis,
+            sqlite_store=orchestrator.sqlite,
+            broker=broker,
+            simulator=simulator,
+        )
+
+        def get_price_fn(symbol: str) -> float:
+            try:
+                quotes = get_live_quote([symbol])
+                return quotes.get(symbol, {}).get("ltp", 0)
+            except Exception as e:
+                logger.error(f"Failed to get price for {symbol}: {e}")
+                return 0
+
         try:
-            alerts = monitor.monitor_positions()
-            if alerts:
-                logger.info(f"Position monitor: {alerts} alert(s) sent")
+            closed = tool.check_paper_exits(get_price_fn)
+            if closed:
+                logger.info(f"Paper exits: {len(closed)} position(s) closed on stop/target")
         except Exception as e:
-            logger.error(f"Position monitor failed: {e}")
+            logger.error(f"Paper exit check failed: {e}")
 
     def _run_force_close(self):
         """15:20 — Force close all intraday positions.
