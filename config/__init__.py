@@ -245,7 +245,7 @@ ALLOWED_COMMUNICATION_PATHS = {
 # --- Default Watchlist (Nifty 50 large caps, high liquidity) ---
 DEFAULT_WATCHLIST = [
     "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS",
-    "LT", "SBIN", "BAJFINANCE", "ITC", "TMPV", "TMLCV",
+    "LT", "SBIN", "BAJFINANCE", "ITC", "TMPV",
     "AXISBANK", "KOTAKBANK", "HINDUNILVR", "BHARTIARTL", "MARUTI",
     "SUNPHARMA", "WIPRO", "TATASTEEL", "NTPC", "POWERGRID",
 ]
