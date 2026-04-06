@@ -64,6 +64,7 @@ class AnalystAgent(BaseAgent):
 
         watchlist = self._strategy_config.get("watchlist", [])
         strategy = self._strategy_config.get("strategy_name", "")
+        self.logger.info(f"Scanning {len(watchlist)} symbols for {strategy}")
 
         for symbol in watchlist:
             tick_data = self.redis.get_market_data(f"data:watchlist_ticks:{symbol}")
@@ -121,6 +122,30 @@ class AnalystAgent(BaseAgent):
         # Opening Range Breakout
         if strategy == "OPENING_RANGE_BREAKOUT":
             pass
+
+        # ADX-based strategies: SWING_MOMENTUM and VOLATILITY_ADJUSTED_SWING
+        if strategy in ("SWING_MOMENTUM", "VOLATILITY_ADJUSTED_SWING"):
+            adx = tick_data.get("adx")
+            if adx is None:
+                return None
+            threshold = float(entry_conditions.get("entry_threshold", 25))
+            needs_volume = entry_conditions.get("volume_confirmation", True)
+
+            if adx > threshold and direction == "LONG":
+                # RSI should be in momentum range (55-70)
+                if rsi is not None and not (55 <= rsi <= 70):
+                    return None
+                if needs_volume and volume_ratio and volume_ratio < 1.3:
+                    return None
+                return {
+                    "symbol": symbol,
+                    "direction": "LONG",
+                    "signal_type": "ADX_MOMENTUM",
+                    "entry_price": close,
+                    "rsi": rsi,
+                    "adx": adx,
+                    "volume_ratio": volume_ratio,
+                }
 
         return None
 

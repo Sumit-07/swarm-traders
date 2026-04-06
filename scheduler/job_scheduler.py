@@ -256,6 +256,12 @@ class SwarmScheduler:
         if not graph:
             return
 
+        strategy_name = (
+            self._initial_state.get("conservative_strategy", {}).get("strategy", "N/A")
+            if self._initial_state else "N/A"
+        )
+        logger.info(f"Signal loop tick — strategy: {strategy_name}")
+
         state = {**self._initial_state}
         state["current_phase"] = "MARKET_OPEN"
 
@@ -264,6 +270,8 @@ class SwarmScheduler:
             signals = result.get("pending_signals", [])
             if signals:
                 logger.info(f"Signal loop: {len(signals)} signals detected")
+            else:
+                logger.info("Signal loop: no signals this tick")
         except Exception as e:
             logger.error(f"Signal loop failed: {e}")
 
