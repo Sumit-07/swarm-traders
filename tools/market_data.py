@@ -76,7 +76,10 @@ def get_ohlcv(symbol: str, interval: str = "5m", days: int = 60) -> pd.DataFrame
     if DATA_SOURCE == "kite" and _kite_client:
         from tools.kite_market_data import get_ohlcv as kite_ohlcv
         kite_interval = INTERVAL_MAP.get(interval, interval)
-        return kite_ohlcv(_kite_client, symbol, kite_interval, days)
+        try:
+            return kite_ohlcv(_kite_client, symbol, kite_interval, days)
+        except KeyError:
+            logger.warning(f"{symbol} not in Kite cache, falling back to yfinance")
 
     # Fallback: yfinance
     from tools.yfinance_fallback import get_ohlcv as yf_ohlcv
@@ -91,7 +94,10 @@ def get_live_quote(symbols: list[str]) -> dict:
     """
     if DATA_SOURCE == "kite" and _kite_client:
         from tools.kite_market_data import get_live_quote as kite_quote
-        return kite_quote(_kite_client, symbols)
+        try:
+            return kite_quote(_kite_client, symbols)
+        except KeyError:
+            logger.warning("Kite quote lookup failed, falling back to yfinance")
 
     from tools.yfinance_fallback import get_live_quote as yf_quote
     return yf_quote(symbols)
