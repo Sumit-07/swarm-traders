@@ -130,10 +130,28 @@ class StrategistAgent(BaseAgent):
             self.logger.error(f"Strategy review LLM failed: {e}")
 
     def _fallback_strategy(self, vix: float) -> dict:
-        """Rule-based fallback when LLM is unavailable."""
-        if vix > 22:
-            return {"strategy": "NO_TRADE", "rationale": f"VIX {vix} too high",
+        """Rule-based fallback when LLM is unavailable.
+
+        3-tier VIX framework:
+        - VIX > 32:  NO_TRADE (extreme fear)
+        - VIX 22-32: VOLATILITY_ADJUSTED_SWING (high-VIX regime)
+        - VIX > 18:  NIFTY_OPTIONS_BUYING (elevated)
+        - VIX <= 18: RSI_MEAN_REVERSION (normal)
+        """
+        if vix > 32:
+            return {"strategy": "NO_TRADE",
+                    "rationale": f"VIX {vix} extreme — capital preservation",
                     "watchlist": [], "confidence": "LOW"}
+        elif vix >= 22:
+            return {"strategy": "VOLATILITY_ADJUSTED_SWING",
+                    "rationale": f"High VIX ({vix}) — swing with wider stops and reduced size",
+                    "watchlist": ["RELIANCE", "HDFCBANK", "INFY", "TCS", "ICICIBANK"],
+                    "entry_conditions": {"indicator": "ADX", "entry_threshold": "28",
+                                         "volume_confirmation": True, "direction": "LONG"},
+                    "exit_conditions": {"target_pct": 5.5, "stop_loss_pct": 3.5,
+                                        "time_exit": "15:00", "trailing_stop": True},
+                    "capital_allocation_pct": 30, "max_trades": 1,
+                    "regime": "HIGH_VOLATILITY", "confidence": "MEDIUM"}
         elif vix > 18:
             return {"strategy": "NIFTY_OPTIONS_BUYING",
                     "rationale": f"Elevated VIX ({vix})",

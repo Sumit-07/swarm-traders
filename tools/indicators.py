@@ -149,3 +149,57 @@ def calculate_all(df: pd.DataFrame) -> dict:
         "ema_20": calculate_ema(df, 20),
         "volume_ratio": calculate_volume_ratio(df),
     }
+
+
+# --- High-VIX strategy helpers ---
+
+
+def straddle_breakeven(
+    nifty_spot: float,
+    call_premium: float,
+    put_premium: float,
+    lot_size: int = 25,
+) -> dict:
+    """Calculate straddle break-even points.
+
+    Args:
+        nifty_spot:    Current Nifty price
+        call_premium:  ATM call premium in points
+        put_premium:   ATM put premium in points
+        lot_size:      Nifty lot size (25 as of 2025)
+
+    Returns:
+        Dict with combined_premium, total_cost_inr, upper/lower breakeven,
+        move_required_pct.
+    """
+    if nifty_spot <= 0:
+        raise ValueError("nifty_spot must be positive")
+    combined = call_premium + put_premium
+    total_inr = combined * lot_size
+    upper = nifty_spot + combined
+    lower = nifty_spot - combined
+    move_pct = round((combined / nifty_spot) * 100, 3)
+
+    return {
+        "combined_premium": combined,
+        "total_cost_inr": total_inr,
+        "upper_breakeven": upper,
+        "lower_breakeven": lower,
+        "move_required_pct": move_pct,
+    }
+
+
+def volatility_adjusted_position_size(
+    normal_position_size: float,
+    normal_stop_pct: float,
+    adjusted_stop_pct: float,
+) -> float:
+    """Calculate reduced position size for high-VIX trades to keep rupee risk constant.
+
+    Logic: (normal_size × normal_stop) = (adjusted_size × adjusted_stop)
+    So: adjusted_size = normal_size × (normal_stop / adjusted_stop)
+
+    Returns adjusted position size rounded to nearest ₹100.
+    """
+    adjusted = normal_position_size * (normal_stop_pct / adjusted_stop_pct)
+    return round(adjusted / 100) * 100

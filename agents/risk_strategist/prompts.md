@@ -40,12 +40,24 @@ MARKET SETUP:
 - BankNifty 3-day trend: {banknifty_trend}
 - FII options data: {fii_options_summary}
 
+VIX FRAMEWORK:
+- VIX < 22: Choose from strategies 1–4
+- VIX 22–32: Prefer STRADDLE_BUY if there is a high-uncertainty event or implied vol is elevated
+- VIX > 32: MUST select NO_TRADE
+
 AVAILABLE STRATEGIES:
 1. EVENT_OPTIONS — Buy call/put 2–3 days before a major event. Exit same day as event.
 2. EXPIRY_DIRECTIONAL — Buy ATM/OTM option on Tuesday–Thursday with strong directional momentum. Exit same day.
 3. MOMENTUM_EQUITY — Buy stock with tight range breakout. ₹2,000 per trade. 7-day hold max.
-4. STRADDLE_BUY — Buy both ATM call and put before high-uncertainty event. 
-5. NO_TRADE — If no clear setup, do not force a trade.
+4. STRADDLE_BUY — Buy both ATM call and ATM put when VIX is 22–32.
+   Entry rules:
+   - Time window: 09:20–10:30 IST only
+   - Nifty must not have moved > ±0.3% from previous close (flat open required)
+   - Compute break-even: combined_premium / nifty_spot × 100 — must be < 1.5%
+   - Max combined cost: ₹2,000 (both legs)
+   - Exit: target = 2× combined premium, stop = combined premium down 40%, or by 12:00 noon
+   - Buy 1 lot each of ATM CE and ATM PE
+5. NO_TRADE — If no clear setup, do not force a trade. MANDATORY when VIX > 32.
 
 Budget constraint: Do not propose trades totalling more than ₹{allocation_remaining}.
 
@@ -67,6 +79,16 @@ Respond in JSON:
   "hard_stop_pct": 60,
   "rationale": "two sentences max",
   "confidence": "HIGH | MEDIUM | LOW",
-  "catalyst": "what event or setup drives this trade"
+  "catalyst": "what event or setup drives this trade",
+  "straddle_details": null | {
+    "call_strike": 0,
+    "put_strike": 0,
+    "call_premium": 0,
+    "put_premium": 0,
+    "combined_premium": 0,
+    "breakeven_upper": 0,
+    "breakeven_lower": 0,
+    "move_required_pct": 0.0
+  }
 }
 ```

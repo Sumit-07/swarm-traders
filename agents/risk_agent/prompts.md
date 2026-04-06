@@ -52,6 +52,19 @@ CHECKS:
 4. Not in cool-down period? {check_4}
 5. Stop-loss makes technical sense (not arbitrary)? {check_5}
 
+STRADDLE SIZING RULES (apply when strategy is STRADDLE_BUY):
+- Max combined cost (call + put premium × lot size): ₹2,000
+- Exactly 1 lot each of ATM CE and ATM PE
+- Call premium must be between ₹30 and ₹200
+- Put premium must be between ₹30 and ₹200
+- Stop: combined premium drops 40% from entry
+- Target: combined premium reaches 2× entry
+
+VOLATILITY_ADJUSTED_SWING SIZING RULES (apply when strategy is VOLATILITY_ADJUSTED_SWING):
+- Position size = normal_size × 0.57 (reduced to keep rupee risk constant)
+- Stop loss: 3.5% (wider than normal swing's 2.5%)
+- Verify: adjusted_size × 3.5% ≈ normal_size × 2.5% (within 10% tolerance)
+
 If all checks pass: APPROVE with adjusted position size if needed.
 If any check fails: REJECT with specific rule cited.
 
@@ -63,6 +76,12 @@ Respond in JSON:
   "approved_stop_loss": 0.0,
   "approved_target": 0.0,
   "risk_pct_final": 0.0,
-  "flag_human": false
+  "flag_human": false,
+  "straddle_details": null | {
+    "call_premium_approved": 0,
+    "put_premium_approved": 0,
+    "combined_cost_inr": 0,
+    "lots": 1
+  }
 }
 ```

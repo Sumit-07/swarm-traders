@@ -130,6 +130,38 @@ THRESHOLDS: dict[str, MonitorThresholds] = {
         cooldown_minutes       = 15,
         time_warning_minutes   = 45,
     ),
+
+    # -- High-VIX strategies (VIX 22-32) -------------------------------------
+
+    "STRADDLE_BUY": MonitorThresholds(
+        strategy_type          = "options",
+        adverse_move_pct       = 0.0,
+        favorable_move_pct     = 0.0,
+        adverse_velocity_pct   = 0.0,
+        favorable_velocity_pct = 0.0,
+        volume_ratio           = 0.0,
+        stop_proximity_pct     = 0.0,
+        target_proximity_pct   = 0.0,
+        premium_decay_pct      = 30.0,
+        premium_surge_pct      = 130.0,
+        grace_period_minutes   = 3,
+        cooldown_minutes       = 10,
+        time_warning_minutes   = 30,
+    ),
+
+    "VOLATILITY_ADJUSTED_SWING": MonitorThresholds(
+        strategy_type          = "swing",
+        adverse_move_pct       = 2.0,
+        favorable_move_pct     = 3.7,
+        adverse_velocity_pct   = 1.2,
+        favorable_velocity_pct = 1.4,
+        volume_ratio           = 3.5,
+        stop_proximity_pct     = 20.0,
+        target_proximity_pct   = 15.0,
+        grace_period_minutes   = 60,
+        cooldown_minutes       = 60,
+        time_warning_minutes   = 0,
+    ),
 }
 
 

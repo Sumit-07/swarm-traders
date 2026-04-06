@@ -11,7 +11,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority
-from config import CAPITAL, RISK_LIMITS
+from config import CAPITAL, RISK_LIMITS, RISK_STRATEGIES
 
 
 class RiskStrategistAgent(BaseAgent):
@@ -76,6 +76,16 @@ class RiskStrategistAgent(BaseAgent):
                     "banknifty_trend": market.get("banknifty", {}).get("change", "unknown"),
                     "fii_options_summary": "N/A",
                 })
+                # Validate strategy name
+                strategy_name = result.get("strategy", "NO_TRADE")
+                if strategy_name not in RISK_STRATEGIES:
+                    self.logger.warning(
+                        f"LLM suggested unknown risk strategy '{strategy_name}', "
+                        f"falling back to NO_TRADE"
+                    )
+                    result = {"strategy": "NO_TRADE",
+                              "rationale": f"Unknown strategy '{strategy_name}'"}
+
                 # Validate total cost within remaining budget
                 total_cost = result.get("total_cost", 0)
                 if total_cost > remaining:

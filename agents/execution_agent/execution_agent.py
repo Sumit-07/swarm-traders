@@ -57,6 +57,11 @@ class ExecutionAgent(BaseAgent):
             return
         self._processed_orders.add(order_id)
 
+        # Route straddle orders to dedicated handler
+        if order.get("strategy") == "STRADDLE_BUY" or order.get("is_straddle"):
+            self._execute_straddle(order)
+            return
+
         mode = order.get("mode", "PAPER")
         symbol = order.get("symbol", "")
         quantity = order.get("quantity", 0)
@@ -281,6 +286,135 @@ class ExecutionAgent(BaseAgent):
             "entry_time": fill["filled_at"],
         })
         self.redis.set_state("state:positions", positions_data)
+
+    def _execute_straddle(self, order: dict):
+        """Execute a straddle order (buy ATM call + ATM put simultaneously).
+
+        Safety: if the put leg fails after the call succeeds, immediately
+        close the call leg to avoid leaving a naked position.
+        """
+        mode = order.get("mode", "PAPER")
+        self.logger.info(
+            f"Executing {mode} STRADDLE on {order.get('symbol', 'NIFTY')}"
+        )
+
+        if mode == "LIVE" and self.broker and self.broker.is_authenticated:
+            self._execute_straddle_live(order)
+        else:
+            fill = self._simulate_straddle_fill(order)
+            if fill and fill["status"] == "FILLED":
+                self._report_fill(order, fill)
+
+    def _simulate_straddle_fill(self, order: dict) -> dict:
+        """Simulate a straddle fill in paper mode with 0.5% slippage on each leg."""
+        call_premium = order.get("call_premium", 70)
+        put_premium = order.get("put_premium", 65)
+        lots = order.get("lots", 1)
+
+        # Apply 0.5% slippage (buying, so price goes up)
+        call_fill = round(call_premium * 1.005, 2)
+        put_fill = round(put_premium * 1.005, 2)
+
+        call_order_id = f"PAPER-STRADDLE-CE-{datetime.now(IST).strftime('%H%M%S')}"
+        put_order_id = f"PAPER-STRADDLE-PE-{datetime.now(IST).strftime('%H%M%S')}"
+
+        return {
+            "order_id": call_order_id,
+            "call_order_id": call_order_id,
+            "put_order_id": put_order_id,
+            "symbol": order.get("symbol", "NIFTY"),
+            "transaction_type": "BUY",
+            "quantity": lots * 25,
+            "call_fill_price": call_fill,
+            "put_fill_price": put_fill,
+            "fill_price": call_fill + put_fill,
+            "combined_premium": call_fill + put_fill,
+            "slippage": round(
+                (call_fill - call_premium + put_fill - put_premium) * lots * 25, 2
+            ),
+            "brokerage": 40,  # Two legs
+            "total_cost": round((call_fill + put_fill) * lots * 25 + 40, 2),
+            "filled_at": datetime.now(IST).isoformat(),
+            "status": "FILLED",
+            "mode": "PAPER",
+            "is_straddle": True,
+        }
+
+    def _execute_straddle_live(self, order: dict):
+        """Execute straddle via live broker — call leg first, then put.
+
+        If put leg fails, immediately close the call leg.
+        """
+        call_fill = None
+        try:
+            # Place call leg
+            call_result = self.broker.place_order(
+                symbol=order.get("call_symbol", ""),
+                qty=order.get("lots", 1) * 25,
+                order_type="MARKET",
+                price=0,
+                transaction_type="BUY",
+                product_type="MIS",
+            )
+            if call_result["status"] != "PLACED":
+                self.logger.error(f"Straddle call leg failed: {call_result['message']}")
+                return
+            call_fill = call_result
+
+            # Place put leg
+            put_result = self.broker.place_order(
+                symbol=order.get("put_symbol", ""),
+                qty=order.get("lots", 1) * 25,
+                order_type="MARKET",
+                price=0,
+                transaction_type="BUY",
+                product_type="MIS",
+            )
+            if put_result["status"] != "PLACED":
+                self.logger.error(
+                    f"Straddle put leg failed: {put_result['message']} — "
+                    f"closing call leg to avoid naked position"
+                )
+                self._close_leg(call_result["order_id"], order, "CE")
+                return
+
+            self.logger.info("Straddle both legs filled successfully")
+
+        except Exception as e:
+            self.logger.error(f"Straddle live execution error: {e}")
+            if call_fill:
+                self.logger.info("Closing call leg after put leg failure")
+                self._close_leg(call_fill["order_id"], order, "CE")
+
+    def _close_leg(self, order_id: str, order: dict, leg: str):
+        """Close a single leg of a straddle to avoid naked position."""
+        symbol_key = "call_symbol" if leg == "CE" else "put_symbol"
+        try:
+            self.broker.place_order(
+                symbol=order.get(symbol_key, ""),
+                qty=order.get("lots", 1) * 25,
+                order_type="MARKET",
+                price=0,
+                transaction_type="SELL",
+                product_type="MIS",
+            )
+            self.logger.info(f"Closed {leg} leg {order_id} to avoid naked position")
+        except Exception as e:
+            self.logger.error(f"CRITICAL: Failed to close {leg} leg {order_id}: {e}")
+
+    def close_straddle(self, position: dict):
+        """Close both legs of a straddle position. Never leave a naked leg."""
+        mode = position.get("mode", "PAPER")
+        self.logger.info(f"Closing straddle position on {position.get('symbol')}")
+
+        if mode == "LIVE" and self.broker and self.broker.is_authenticated:
+            for leg in ["call_order_id", "put_order_id"]:
+                leg_id = position.get(leg)
+                if leg_id:
+                    leg_type = "CE" if "call" in leg else "PE"
+                    self._close_leg(leg_id, position, leg_type)
+        else:
+            self.logger.info(f"PAPER straddle closed: {position.get('symbol')}")
 
     def run(self, state: dict) -> dict:
         """LangGraph node: execute approved orders."""
