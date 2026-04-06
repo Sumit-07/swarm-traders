@@ -162,16 +162,40 @@ class SwarmScheduler:
     # --- Scheduled Actions ---
 
     def _system_startup(self):
-        """06:55 — Initialize all agents."""
-        logger.info("System startup initiated")
+        """06:55 — Wake all agents and re-authenticate Kite for the new day."""
+        logger.info("System startup initiated (daily wake)")
+
+        # Re-authenticate Kite first (token expires at midnight)
+        orchestrator = self.agents.get("orchestrator")
+        if orchestrator and orchestrator.broker and orchestrator.telegram:
+            try:
+                from tools.kite_auth import load_or_refresh_token
+                from tools.market_data import set_kite_client
+                from tools.kite_market_data import build_instrument_cache
+
+                kite = load_or_refresh_token(orchestrator.telegram)
+                orchestrator.kite = kite
+                set_kite_client(kite)
+                orchestrator.broker.set_kite_client(kite)
+                build_instrument_cache(kite)
+                logger.info("Kite re-authenticated for new trading day.")
+            except Exception as e:
+                logger.error(f"Kite re-auth failed: {e}. Continuing in paper mode.")
+                if self.telegram:
+                    self.telegram.send_message(
+                        f"Kite re-auth failed: {e}\n"
+                        "Continuing in paper mode with yfinance data."
+                    )
+
+        # Wake all agents (they were put to sleep at 17:15)
         for agent_id, agent in self.agents.items():
             try:
-                agent.start()
+                agent.wake()
             except Exception as e:
-                logger.error(f"Failed to start {agent_id}: {e}")
+                logger.error(f"Failed to wake {agent_id}: {e}")
 
         if self.telegram:
-            self.telegram.send_message("Trading system online. All agents starting.")
+            self.telegram.send_message("Trading system online. All agents waking up.")
 
     def _wake_agent(self, agent_id: str):
         """Wake a specific agent from sleep."""
