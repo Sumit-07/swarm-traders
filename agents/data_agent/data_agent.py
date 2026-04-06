@@ -11,6 +11,7 @@ IST = ZoneInfo("Asia/Kolkata")
 
 from agents.base_agent import BaseAgent
 from agents.message import AgentMessage, MessageType, Priority
+from config import DEFAULT_WATCHLIST
 from tools.market_data import MarketDataProvider
 from tools.indicators import calculate_all
 
@@ -23,6 +24,11 @@ class DataAgent(BaseAgent):
         self._watchlist: list[str] = []
 
     def on_start(self):
+        # Seed watchlist so data flows immediately (strategist can override later)
+        if not self._watchlist:
+            self._watchlist = DEFAULT_WATCHLIST.copy()
+            self.logger.info(f"Watchlist seeded with {len(self._watchlist)} default symbols")
+
         # Schedule recurring data pulls
         self.scheduler.add_job(
             self.pull_market_snapshot, "interval", minutes=1,
@@ -67,7 +73,7 @@ class DataAgent(BaseAgent):
         snapshot["timestamp"] = datetime.now(IST).isoformat()
         self.redis.set_market_data("data:market_snapshot", snapshot, ttl=360)
         self._last_action = "pulled market snapshot"
-        self.logger.debug("Market snapshot saved to Redis.")
+        self.logger.info("Market snapshot saved to Redis.")
 
     def pull_watchlist_data(self):
         """Fetch OHLCV and calculate indicators for watchlist symbols."""
@@ -107,6 +113,7 @@ class DataAgent(BaseAgent):
                 self.logger.warning(f"Failed to pull data for {symbol}: {e}")
 
         self._last_action = f"pulled watchlist data for {len(self._watchlist)} symbols"
+        self.logger.info(f"Watchlist data saved to Redis for {len(self._watchlist)} symbols")
 
     def _handle_ohlcv_request(self, message: AgentMessage):
         """Handle on-demand OHLCV request from another agent."""
@@ -156,12 +163,14 @@ class DataAgent(BaseAgent):
         """LangGraph node: refresh market data."""
         self.pull_market_snapshot()
 
-        # Set watchlist from strategy if available
+        # Set watchlist from strategy if available, fall back to defaults
         strategy = state.get("conservative_strategy") or {}
         watchlist = strategy.get("watchlist", [])
         if watchlist:
             self._watchlist = watchlist
-            self.pull_watchlist_data()
+        elif not self._watchlist:
+            self._watchlist = DEFAULT_WATCHLIST.copy()
+        self.pull_watchlist_data()
 
         state["market_data_ready"] = True
         state["last_data_update"] = datetime.now(IST).isoformat()
