@@ -55,6 +55,7 @@ class ExecutionAgent(BaseAgent):
                 "stop_loss": pos.get("stop_loss", 0),
                 "target": pos.get("target", 0),
                 "bucket": pos.get("bucket", "conservative"),
+                "entry_fees": pos.get("entry_fees", 20),  # default brokerage
                 "entry_time": pos.get("entry_time", ""),
                 "status": "OPEN",
             }

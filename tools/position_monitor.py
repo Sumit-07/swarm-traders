@@ -116,6 +116,9 @@ class PositionMonitor:
         for pos in list(self.simulator.open_positions):
             try:
                 price = get_price_fn(pos["symbol"])
+                if not price or price <= 0:
+                    logger.warning(f"No valid price for {pos['symbol']} — skipping exit check")
+                    continue
                 fill, reason = self.simulator.check_exits(
                     pos, current_price=price, current_time=datetime.now(IST),
                 )
