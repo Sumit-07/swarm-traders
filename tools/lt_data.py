@@ -25,11 +25,42 @@ NSE_BASE = "https://www.nseindia.com"
 HEADERS  = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
     ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
 }
+
+# Shared session with cookies — NSE blocks requests without a valid session cookie
+_nse_session: Optional[requests.Session] = None
+_nse_session_ts: float = 0
+
+
+def _get_nse_session() -> requests.Session:
+    """Return a requests session with valid NSE cookies.
+
+    NSE requires visiting the homepage first to set cookies.
+    Session is reused for 4 minutes to avoid repeated cookie fetches.
+    """
+    global _nse_session, _nse_session_ts
+    now = time.time()
+    if _nse_session and (now - _nse_session_ts) < 240:
+        return _nse_session
+
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    try:
+        r = session.get(NSE_BASE, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning("NSE session init failed: %s", e)
+        # Return session anyway — individual calls will fail gracefully
+    time.sleep(0.5)
+    _nse_session = session
+    _nse_session_ts = now
+    return session
 
 
 def get_nifty_pe() -> Optional[float]:
@@ -38,17 +69,14 @@ def get_nifty_pe() -> Optional[float]:
     Returns float or None if fetch fails.
 
     NSE publishes PE/PB/Div yield for all indices.
-    Falls back to a simplified calculation from price/EPS if direct fetch fails.
+    Falls back to yfinance if NSE is unreachable.
     """
+    # Try NSE primary endpoint
     try:
-        session = requests.Session()
-        # First request to get cookies
-        session.get(NSE_BASE, headers=HEADERS, timeout=10)
-        time.sleep(0.5)
-
+        session = _get_nse_session()
         resp = session.get(
-            f"{NSE_BASE}/api/equity-stockIndices?index=NIFTY+50",
-            headers={**HEADERS, "Referer": NSE_BASE},
+            f"{NSE_BASE}/api/equity-stockIndices?index=NIFTY%2050",
+            headers={"Referer": f"{NSE_BASE}/market-data/live-equity-market"},
             timeout=10,
         )
         resp.raise_for_status()
@@ -59,27 +87,14 @@ def get_nifty_pe() -> Optional[float]:
             return round(float(pe), 2)
 
     except Exception as e:
-        logger.warning("NSE PE fetch failed: %s. Trying fallback.", e)
+        logger.warning("NSE PE fetch failed: %s. Trying fallbacks.", e)
 
-    # Fallback 1: yfinance Nifty data
+    # Fallback 1: NSE allIndices endpoint (different URL, same session)
     try:
-        nifty = yf.Ticker("^NSEI")
-        info  = nifty.info
-        pe    = info.get("trailingPE") or info.get("forwardPE")
-        if pe:
-            return round(float(pe), 2)
-    except Exception as e:
-        logger.warning("yfinance PE fallback failed: %s", e)
-
-    # Fallback 2: NSE index API with different endpoint
-    try:
-        session = requests.Session()
-        session.get(NSE_BASE, headers=HEADERS, timeout=10)
-        time.sleep(0.5)
-
+        session = _get_nse_session()
         resp = session.get(
             f"{NSE_BASE}/api/allIndices",
-            headers={**HEADERS, "Referer": NSE_BASE},
+            headers={"Referer": f"{NSE_BASE}/market-data/live-equity-market"},
             timeout=10,
         )
         resp.raise_for_status()
@@ -90,7 +105,17 @@ def get_nifty_pe() -> Optional[float]:
                 if pe:
                     return round(float(pe), 2)
     except Exception as e:
-        logger.error("NSE allIndices PE fallback failed: %s", e)
+        logger.warning("NSE allIndices PE fallback failed: %s", e)
+
+    # Fallback 2: yfinance (often no PE for indices, but worth trying)
+    try:
+        nifty = yf.Ticker("^NSEI")
+        info  = nifty.info
+        pe    = info.get("trailingPE") or info.get("forwardPE")
+        if pe:
+            return round(float(pe), 2)
+    except Exception as e:
+        logger.warning("yfinance PE fallback failed: %s", e)
 
     return None
 
@@ -134,13 +159,10 @@ def get_fii_monthly_flow() -> dict:
         }
     """
     try:
-        session = requests.Session()
-        session.get(NSE_BASE, headers=HEADERS, timeout=10)
-        time.sleep(0.5)
-
+        session = _get_nse_session()
         resp = session.get(
             f"{NSE_BASE}/api/fiidiiTradeReact",
-            headers={**HEADERS, "Referer": NSE_BASE},
+            headers={"Referer": f"{NSE_BASE}/report-equity/fii-dii"},
             timeout=10,
         )
         resp.raise_for_status()

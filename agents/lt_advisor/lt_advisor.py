@@ -161,9 +161,12 @@ class LTAdvisor:
             sectors = get_sector_performance_30d()
             events = get_upcoming_events(30)
 
-            fii_30day = float(fii_redis.get("fii_30day", 0)) or float(
-                get_fii_monthly_flow().get("fii_30day", 0)
-            )
+            try:
+                fii_30day = float(fii_redis.get("fii_30day", 0) or 0)
+            except (TypeError, ValueError):
+                fii_30day = 0.0
+            if not fii_30day:
+                fii_30day = float(get_fii_monthly_flow().get("fii_30day", 0) or 0)
 
             nifty_from_high = (
                 ((nifty - hl["high"]) / hl["high"] * 100) if hl["high"] else 0
@@ -178,10 +181,10 @@ class LTAdvisor:
                 "nifty_52w_low": hl["low"],
                 "nifty_from_high_pct": round(nifty_from_high, 2),
                 "nifty_pe": pe,
-                "fii_today": float(fii_redis.get("fii_today", 0)),
-                "fii_5day": float(fii_redis.get("fii_5day", 0)),
+                "fii_today": float(fii_redis.get("fii_today", 0) or 0),
+                "fii_5day": float(fii_redis.get("fii_5day", 0) or 0),
                 "fii_30day": fii_30day,
-                "dii_5day": float(fii_redis.get("dii_5day", 0)),
+                "dii_5day": float(fii_redis.get("dii_5day", 0) or 0),
                 "sector_list": sectors,
                 "calendar_events": events,
                 "nifty_change_today_pct": float(
