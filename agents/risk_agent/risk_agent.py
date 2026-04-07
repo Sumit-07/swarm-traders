@@ -23,6 +23,7 @@ class RiskAgent(BaseAgent):
         self._in_cooldown: bool = False
         self._cooldown_until: datetime | None = None
         self._todays_pnl: float = 0.0
+        self._review_cache: dict = {}  # "symbol:direction" -> {"decision": ..., "ts": ...}
 
     def on_start(self):
         self.logger.info("Risk Agent ready — all proposals will be reviewed")
@@ -43,6 +44,28 @@ class RiskAgent(BaseAgent):
             elif command == "RECORD_WIN":
                 self._consecutive_losses = 0
 
+    def _check_review_cache(self, symbol: str, direction: str) -> dict | None:
+        """Return cached decision if same symbol+direction was reviewed within 1 hour."""
+        import time as _time
+        cache_key = f"{symbol}:{direction}"
+        cached = self._review_cache.get(cache_key)
+        if cached and (_time.time() - cached["ts"]) < 3600:
+            return cached
+        return None
+
+    def _update_review_cache(self, symbol: str, direction: str, decision: str):
+        """Cache a review decision for 1 hour."""
+        import time as _time
+        # Evict stale entries (> 1 hour old)
+        now = _time.time()
+        self._review_cache = {
+            k: v for k, v in self._review_cache.items()
+            if now - v["ts"] < 3600
+        }
+        self._review_cache[f"{symbol}:{direction}"] = {
+            "decision": decision, "ts": now,
+        }
+
     def _review_trade_proposal(self, message: AgentMessage):
         """Review a trade proposal against 5 risk checks (message-driven path).
 
@@ -52,40 +75,63 @@ class RiskAgent(BaseAgent):
         self._refresh_todays_pnl()
         proposal = message.payload
         symbol = proposal.get("symbol", "")
+        direction = proposal.get("direction", "LONG")
         entry_price = proposal.get("entry_price", 0)
         stop_loss = proposal.get("stop_loss", 0)
         quantity = proposal.get("quantity_suggested", 1)
         bucket = proposal.get("bucket", "conservative")
+
+        # Check cache — skip full review if same symbol+direction was reviewed recently
+        cached = self._check_review_cache(symbol, direction)
+        if cached and cached["decision"] == "REJECTED":
+            self.logger.info(f"CACHED REJECT {symbol} {direction} — skipping review")
+            self.send_message(
+                to_agent="analyst",
+                msg_type=MessageType.RESPONSE,
+                payload={
+                    "proposal_id": proposal.get("proposal_id", ""),
+                    "decision": "REJECTED",
+                },
+                priority=Priority.NORMAL,
+            )
+            return
 
         # Run the 5 rule checks
         decision_payload = self._review_proposal_data(proposal)
         checks = decision_payload.get("checks", {})
         all_passed = decision_payload["decision"] == "APPROVED"
 
-        # Enhance with LLM review (message path only — graph path skips for speed)
-        if bucket == "risk":
-            capital = CAPITAL["risk_bucket_monthly"]
+        # Cache the decision
+        self._update_review_cache(symbol, direction, decision_payload["decision"])
+
+        # Only call LLM when rules pass — no point in LLM review for rejected trades
+        llm_review = {}
+        if all_passed:
+            if bucket == "risk":
+                capital = CAPITAL["risk_bucket_monthly"]
+            else:
+                capital = CAPITAL["conservative_bucket"]
+            risk_per_share = abs(entry_price - stop_loss)
+            capital_at_risk = risk_per_share * quantity
+            risk_pct = capital_at_risk / capital if capital > 0 else 1.0
+            max_daily_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
+            remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
+
+            llm_review = self._llm_trade_review(
+                proposal, checks, capital_at_risk, risk_pct, remaining_budget
+            )
+            flag_human = risk_pct > 0.015 or llm_review.get("flag_human", False)
+
+            # Override reason and SL/target with LLM suggestions if available
+            if llm_review.get("reason"):
+                decision_payload["reason"] = llm_review["reason"]
+            if llm_review.get("approved_stop_loss"):
+                decision_payload["approved_stop_loss"] = llm_review["approved_stop_loss"]
+            if llm_review.get("approved_target"):
+                decision_payload["approved_target"] = llm_review["approved_target"]
+            decision_payload["flag_human"] = flag_human
         else:
-            capital = CAPITAL["conservative_bucket"]
-        risk_per_share = abs(entry_price - stop_loss)
-        capital_at_risk = risk_per_share * quantity
-        risk_pct = capital_at_risk / capital if capital > 0 else 1.0
-        max_daily_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
-        remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
-
-        llm_review = self._llm_trade_review(
-            proposal, checks, capital_at_risk, risk_pct, remaining_budget
-        )
-        flag_human = risk_pct > 0.015 or llm_review.get("flag_human", False)
-
-        # Override reason and SL/target with LLM suggestions if available
-        if all_passed and llm_review.get("reason"):
-            decision_payload["reason"] = llm_review["reason"]
-        if llm_review.get("approved_stop_loss"):
-            decision_payload["approved_stop_loss"] = llm_review["approved_stop_loss"]
-        if llm_review.get("approved_target"):
-            decision_payload["approved_target"] = llm_review["approved_target"]
-        decision_payload["flag_human"] = flag_human
+            decision_payload["flag_human"] = False
 
         # Send decision to orchestrator
         self.send_message(
