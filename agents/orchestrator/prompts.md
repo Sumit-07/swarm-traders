@@ -122,156 +122,83 @@ Be honest about losses. Do not sugarcoat. Flag if any limits were approached.
 ```
 
 ## PROMPT_ANALYST_POSITION_REVIEW
+### Status: DEPRECATED — replaced by PROMPT_POSITION_REVIEW_CONSOLIDATED
+Kept for reference only. Do not use.
+
+## PROMPT_RISK_POSITION_REVIEW
+### Status: DEPRECATED — replaced by PROMPT_POSITION_REVIEW_CONSOLIDATED
+Kept for reference only. Do not use.
+
+## PROMPT_ORCHESTRATOR_POSITION_DECISION
+### Status: DEPRECATED — replaced by PROMPT_POSITION_REVIEW_CONSOLIDATED
+Kept for reference only. Do not use.
+
+## PROMPT_POSITION_REVIEW_CONSOLIDATED
 ### Purpose
-Called when a Position Monitor alert triggers a review. Analyst checks if the
-original trade thesis still holds.
+Single-call position review that replaces the previous 3-call chain
+(Analyst thesis → Risk review → Orchestrator decision). Thinks from all
+three perspectives in one pass.
 
 ### Template
 ```
-You are the Analyst. A Position Monitor alert has been raised for an open
-position. Review whether the original trade thesis still holds.
+A Position Monitor alert has been raised. Review this position from three
+perspectives (Analyst, Risk Agent, Orchestrator) and make a final decision.
 
 OPEN POSITION:
-- Symbol: {symbol}
-- Direction: {direction}
-- Strategy: {strategy_name}
-- Entry price: {entry_price}
-- Entry time: {entry_time}
-- Current price: {current_price}
-- Current P&L: {current_pnl} ({pnl_pct}%)
-- Distance to stop: {distance_to_stop_pct}%
-- Distance to target: {distance_to_target_pct}%
-- Time in trade: {minutes_in_trade} minutes
+- Symbol: {symbol} | Direction: {direction} | Strategy: {strategy_name}
+- Entry: {entry_price} at {entry_time} | Current: {current_price}
+- P&L: {current_pnl} ({pnl_pct}%)
+- Distance to stop: {distance_to_stop_pct}% | Distance to target: {distance_to_target_pct}%
+- Time in trade: {minutes_in_trade} min | Position size: {position_size}
+- Bucket: {bucket}
 
-ALERT DETAILS:
-- Trigger type: {trigger_type}
-- Trigger value: {trigger_value}
-- Threshold that was crossed: {threshold_description}
+ALERT TRIGGER:
+- Type: {trigger_type} | Value: {trigger_value}
+- Description: {trigger_description}
 
-CURRENT MARKET DATA:
-- Nifty direction: {nifty_direction} ({nifty_move_30m}%)
-- India VIX: {vix}
-- Symbol volume ratio: {volume_ratio}x
-- RSI current: {rsi}
-- VWAP deviation: {vwap_deviation}%
+MARKET DATA:
+- Nifty: {nifty_direction} ({nifty_move_30m}%) | VIX: {vix}
+- Symbol volume ratio: {volume_ratio}x | RSI: {rsi} | VWAP dev: {vwap_deviation}%
 
 ORIGINAL ENTRY REASONING:
 {original_analyst_note}
 
-Answer ONE question: Does the original trade thesis still hold?
-
-Consider:
-1. Has the indicator that triggered entry reversed or weakened significantly?
-2. Is the broader market working against this position?
-3. Is the move accompanied by confirming volume (structural) or low volume (noise)?
-4. For the strategy type ({strategy_name}), is this move within normal
-   expected variance or is it a genuine thesis break?
-
-Respond in JSON:
-{
-  "thesis_holds": true,
-  "confidence": "HIGH",
-  "key_reason": "one specific sentence",
-  "market_alignment": "WITH",
-  "indicator_status": "INTACT",
-  "analyst_recommendation": "HOLD",
-  "note": "optional context"
-}
-```
-
-## PROMPT_RISK_POSITION_REVIEW
-### Purpose
-Called after Analyst review. Risk Agent makes a risk-based recommendation.
-
-### Template
-```
-You are the Risk Agent. Review an open position following a Position Monitor
-alert. The Analyst has reviewed the trade thesis. Make a risk-based decision.
-
-POSITION STATE:
-- Symbol: {symbol}
-- Strategy: {strategy_name}
-- Current P&L: {current_pnl} ({pnl_pct}%)
-- Distance to stop: {distance_to_stop_pct}%
-- Distance to target: {distance_to_target_pct}%
-- Time in trade: {minutes_in_trade} min
-- Position size: {position_size}
-- Bucket: {bucket}
-
-ALERT TRIGGER:
-- Type: {trigger_type}
-- Value: {trigger_value}
-
-ANALYST ASSESSMENT:
-- Thesis holds: {thesis_holds}
-- Analyst confidence: {analyst_confidence}
-- Indicator status: {indicator_status}
-- Analyst recommendation: {analyst_recommendation}
-
 PORTFOLIO CONTEXT:
-- Today's P&L so far: {todays_pnl}
-- Loss budget remaining: {loss_budget_remaining}
+- Today's P&L: {todays_pnl} | Loss budget remaining: {loss_budget_remaining}
 - Other open positions: {other_positions_count}
-- Consecutive losses today: {consecutive_losses}
-
-STRATEGY-SPECIFIC CONTEXT:
+- Consecutive losses: {consecutive_losses}
 - Strategy type: {strategy_type}
-- Time remaining before forced close: {time_to_forced_close} min
 
-Respond in JSON:
-{
-  "action": "HOLD",
-  "reason": "one sentence citing the key factor",
-  "urgency": "MONITOR",
-  "if_trail_stop": {"new_stop_price": 0.0, "rationale": "why this level"},
-  "if_partial_exit": {"exit_quantity": 0, "remaining_quantity": 0, "rationale": "why partial"},
-  "flag_human": false,
-  "flag_reason": null
-}
-```
+REVIEW STEPS (think through each):
 
-## PROMPT_ORCHESTRATOR_POSITION_DECISION
-### Purpose
-Orchestrator synthesises Analyst + Risk Agent inputs and makes final decision.
-Also generates the Telegram message.
+1. ANALYST LENS: Does the original trade thesis still hold? Has the trigger
+   indicator reversed? Is the move structural (volume-confirmed) or noise?
 
-### Template
-```
-You are the Orchestrator. A Position Monitor alert has triggered a full
-review. You have received assessments from Analyst and Risk Agent.
-Make the final decision and draft the Telegram message.
+2. RISK LENS: Given the P&L, loss budget, and position size — what does
+   risk management say? Is the loss budget threatened? Should we trail stop
+   or take partial exit?
 
-POSITION: {symbol} {direction} | Entry {entry_price} | Now {current_price}
-P&L: {current_pnl} ({pnl_pct}%) | Strategy: {strategy_name}
+3. FINAL DECISION: Combine both views. When they conflict, default to the
+   more conservative action. If loss > 1.5% of capital or loss budget < 20%
+   remaining, lean towards EXIT.
 
-ALERT TRIGGER: {trigger_type} -- {trigger_description}
+Respond in JSON then --- then Telegram message (plain text, under 120 words).
 
-ANALYST SAYS:
-- Thesis holds: {thesis_holds} (confidence: {analyst_confidence})
-- Key reason: {analyst_key_reason}
-- Recommendation: {analyst_recommendation}
+If execute_immediately is true, set order_details with:
+- type: "TRAIL_STOP" (with new_stop_price), "PARTIAL" (with quantity), or "FULL"
+- symbol: the position symbol
 
-RISK AGENT SAYS:
-- Action: {risk_action}
-- Reason: {risk_reason}
-- Urgency: {risk_urgency}
-- Flag human: {flag_human}
-
-Make the final decision. When both agents agree, follow their lead.
-When they disagree, default to the more conservative action.
-Always flag human if Risk Agent says to.
-
-Then write the Telegram message. Plain text. Under 120 words.
-Include: what triggered, what you decided, why, what happens next.
-
-Respond in JSON then --- then Telegram message:
-{
-  "final_action": "HOLD",
-  "reason": "one sentence",
+{{
+  "thesis_holds": true/false,
+  "thesis_reason": "one sentence",
+  "risk_assessment": "one sentence on risk state",
+  "final_action": "HOLD/EXIT/TRAIL_STOP/PARTIAL",
+  "reason": "one sentence combining analyst + risk view",
   "execute_immediately": false,
   "order_details": null,
+  "flag_human": false,
   "send_telegram": true
-}
+}}
 ---
-[Telegram message -- plain text, under 120 words]
+[Telegram message — what triggered, what you decided, why, what happens next]
 ```

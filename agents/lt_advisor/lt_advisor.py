@@ -144,8 +144,12 @@ class LTAdvisor:
             snapshot = self.redis.get_state("data:market_snapshot") or {}
             fii_redis = self.redis.get_state("data:fii_flow") or {}
 
-            vix = float(snapshot.get("vix", 0))
-            nifty = float(snapshot.get("nifty", 0))
+            # Snapshot keys are nested dicts: {"nifty": {"ltp": ..., "change_pct": ...}, "indiavix": {"ltp": ...}}
+            vix_data = snapshot.get("indiavix", snapshot.get("india vix", {}))
+            nifty_data = snapshot.get("nifty", snapshot.get("nifty 50", {}))
+
+            vix = float(vix_data.get("ltp", 0)) if isinstance(vix_data, dict) else float(vix_data or 0)
+            nifty = float(nifty_data.get("ltp", 0)) if isinstance(nifty_data, dict) else float(nifty_data or 0)
 
             if vix == 0 or nifty == 0:
                 logger.warning("VIX or Nifty is 0 in Redis snapshot.")
@@ -181,7 +185,7 @@ class LTAdvisor:
                 "sector_list": sectors,
                 "calendar_events": events,
                 "nifty_change_today_pct": float(
-                    snapshot.get("nifty_change_pct", 0)
+                    nifty_data.get("change_pct", 0) if isinstance(nifty_data, dict) else 0
                 ),
             }
 

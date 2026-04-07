@@ -84,8 +84,9 @@ class AnalystAgent(BaseAgent):
             self._signal_payloads.pop(pid, None)
 
         # Block intraday strategies after no_new_trades cutoff
+        # Skip time check during dry runs (allow post-market testing)
         strategy_name = (self._strategy_config or {}).get("strategy_name", "")
-        if strategy_name not in SWING_STRATEGIES:
+        if strategy_name not in SWING_STRATEGIES and not getattr(self, '_dry_run_mode', False):
             if datetime.now(IST).strftime("%H:%M") >= TRADING_HOURS["no_new_trades"]:
                 self.logger.info("Past intraday cutoff — no new signals")
                 return
@@ -111,6 +112,24 @@ class AnalystAgent(BaseAgent):
                     self.logger.info(f"Signal rejected by cost check for {symbol}: {cost_reason}")
                     continue
 
+                # Skip LLM for very strong rule-based signals
+                if self._is_strong_signal(signal):
+                    rsi_val = signal.get("rsi")
+                    vol_val = signal.get("volume_ratio")
+                    rsi_str = f"{rsi_val:.1f}" if rsi_val is not None else "N/A"
+                    vol_str = f"{vol_val:.1f}" if vol_val is not None else "N/A"
+                    signal["confidence"] = "HIGH"
+                    signal["analyst_note"] = (
+                        f"Strong rule-based signal — LLM skipped. "
+                        f"{signal.get('signal_type', '')} "
+                        f"RSI={rsi_str}, vol={vol_str}x"
+                    )
+                    self._submit_trade_proposal(signal)
+                    self.logger.info(
+                        f"Strong signal for {symbol} — skipping LLM validation"
+                    )
+                    continue
+
                 # Validate signal with LLM for additional context
                 validated = self._validate_signal_with_llm(signal, tick_data)
                 if validated and validated.get("signal_valid", False):
@@ -126,6 +145,39 @@ class AnalystAgent(BaseAgent):
                         f"Signal invalidated by LLM for {symbol}: "
                         f"{validated.get('invalidation_reason', 'N/A')}"
                     )
+
+    def _is_strong_signal(self, signal: dict) -> bool:
+        """Check if a signal is strong enough to skip LLM validation.
+
+        Strong signals have extreme indicator readings with volume confirmation.
+        This saves one LLM call per signal (~3-8 per day).
+        """
+        rsi = signal.get("rsi")
+        volume_ratio = signal.get("volume_ratio") or 0
+        signal_type = signal.get("signal_type", "")
+
+        # Must have volume confirmation (> 1.5x average)
+        if volume_ratio < 1.5:
+            return False
+
+        # RSI extremes: < 25 (very oversold) or > 75 (very overbought)
+        if signal_type in ("RSI_OVERSOLD", "RSI_OVERBOUGHT"):
+            if rsi is not None and (rsi < 25 or rsi > 75):
+                return True
+
+        # VWAP: deviation > 2% with volume
+        if signal_type in ("VWAP_BELOW", "VWAP_ABOVE"):
+            vwap_dev = abs(signal.get("vwap_deviation_pct", 0))
+            if vwap_dev > 2.0:
+                return True
+
+        # ADX momentum: ADX > 30 with RSI in sweet spot (58-68)
+        if signal_type == "ADX_MOMENTUM":
+            adx = signal.get("adx") or 0
+            if adx > 30 and rsi is not None and 58 <= rsi <= 68:
+                return True
+
+        return False
 
     def _check_entry_conditions(self, symbol: str, tick_data: dict,
                                 strategy: str) -> dict | None:
@@ -417,27 +469,29 @@ class AnalystAgent(BaseAgent):
             quantity_suggested=quantity,
             stop_loss=stop_loss,
             target=target,
-            signal_confidence="MEDIUM",
+            signal_confidence=signal.get("confidence", "MEDIUM"),
             indicator_snapshot={
                 "rsi": signal.get("rsi"),
                 "adx": signal.get("adx"),
                 "volume_ratio": signal.get("volume_ratio"),
             },
             bucket=self._strategy_config.get("bucket", "conservative"),
-            analyst_note=note,
+            analyst_note=signal.get("analyst_note") or note,
         )
 
         proposal_data = proposal.model_dump()
         self._pending_signals[proposal.proposal_id] = _time.time()
         self._signal_payloads[proposal.proposal_id] = proposal_data
 
-        self.send_message(
-            to_agent="risk_agent",
-            msg_type=MessageType.SIGNAL,
-            payload=proposal_data,
-            priority=Priority.HIGH,
-            requires_response=True,
-        )
+        # Only send message if NOT in graph run — graph routes via state
+        if not getattr(self, '_in_graph_run', False):
+            self.send_message(
+                to_agent="risk_agent",
+                msg_type=MessageType.SIGNAL,
+                payload=proposal_data,
+                priority=Priority.HIGH,
+                requires_response=True,
+            )
         self.logger.info(
             f"Trade proposal submitted: {signal['symbol']} "
             f"{signal['direction']} @ {entry_price}"
@@ -471,6 +525,11 @@ class AnalystAgent(BaseAgent):
                 "stop_loss_pct": strategy.get("exit_conditions", {}).get("stop_loss_pct") or strategy.get("stop_loss_pct"),
                 "bucket": "conservative",
             }
-        self._scan_watchlist()
+        # Suppress messages during graph run — graph handles routing via state
+        self._in_graph_run = True
+        try:
+            self._scan_watchlist()
+        finally:
+            self._in_graph_run = False
         state["pending_signals"] = list(self._signal_payloads.values())
         return state

@@ -187,6 +187,8 @@ class OrchestratorAgent(BaseAgent):
             self._handle_human_rejection(message.payload.get("proposal_id", ""))
         elif command == "CATCHUP":
             self._handle_catchup()
+        elif command == "DRY_RUN":
+            self._handle_dry_run()
         elif command == "LT_SCAN":
             self._handle_lt_scan()
 
@@ -208,6 +210,24 @@ class OrchestratorAgent(BaseAgent):
             self.logger.error(f"Catchup failed: {e}")
             if self.telegram:
                 self.telegram.send_message(f"Catchup failed: {e}")
+
+    def _handle_dry_run(self):
+        """Run full pipeline test: morning graph → signal loop → position monitor."""
+        scheduler = getattr(self, "swarm_scheduler", None)
+        if not scheduler:
+            self.logger.error("No scheduler reference — dry run unavailable")
+            if self.telegram:
+                self.telegram.send_message("Dry run failed: scheduler not available.")
+            return
+        try:
+            import threading
+            threading.Thread(
+                target=scheduler.dry_run, daemon=True, name="dry-run",
+            ).start()
+        except Exception as e:
+            self.logger.error(f"Dry run failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"Dry run failed: {e}")
 
     def _handle_lt_advisor_alert(self, message: AgentMessage):
         """Handle LT_Advisor alert — direct passthrough to Telegram.
@@ -635,10 +655,11 @@ class OrchestratorAgent(BaseAgent):
     # ── Position Monitor Review Flow ──────────────────────────────────────
 
     def _handle_position_alert(self, message: AgentMessage):
-        """Full review flow triggered by Position Monitor alert.
+        """Review an open position after a Position Monitor alert.
 
-        3-step LLM review: Analyst thesis check → Risk Agent recommendation
-        → Orchestrator decision. Always sends Telegram.
+        Single consolidated LLM call that thinks from Analyst, Risk, and
+        Orchestrator perspectives. Replaces the previous 3-call chain.
+        Always sends Telegram.
         """
         import json
 
@@ -650,64 +671,16 @@ class OrchestratorAgent(BaseAgent):
             symbol, alert.get("trigger_type"),
         )
 
-        # Build shared context for prompts
         context = self._build_review_context(alert)
 
         try:
-            # Step 1 — Analyst thesis check
-            analyst_response = self.call_llm(
-                "PROMPT_ANALYST_POSITION_REVIEW", context,
-            )
-        except Exception as e:
-            self.logger.error("Analyst position review failed: %s", e)
-            analyst_response = {
-                "thesis_holds": False, "confidence": "LOW",
-                "key_reason": "LLM unavailable",
-                "analyst_recommendation": "EXIT",
-                "indicator_status": "UNKNOWN",
-                "market_alignment": "UNKNOWN",
-            }
-
-        try:
-            # Step 2 — Risk Agent review
-            risk_context = {
-                **context,
-                "thesis_holds": analyst_response.get("thesis_holds", False),
-                "analyst_confidence": analyst_response.get("confidence", "LOW"),
-                "indicator_status": analyst_response.get("indicator_status", "UNKNOWN"),
-                "analyst_recommendation": analyst_response.get("analyst_recommendation", "EXIT"),
-            }
-            risk_response = self.call_llm(
-                "PROMPT_RISK_POSITION_REVIEW", risk_context,
-            )
-        except Exception as e:
-            self.logger.error("Risk position review failed: %s", e)
-            risk_response = {
-                "action": "HOLD", "reason": "LLM unavailable",
-                "urgency": "MONITOR", "flag_human": True,
-                "flag_reason": "Review LLM failed",
-            }
-
-        try:
-            # Step 3 — Orchestrator final decision
-            decision_context = {
-                **context,
-                "thesis_holds": analyst_response.get("thesis_holds", False),
-                "analyst_confidence": analyst_response.get("confidence", "LOW"),
-                "analyst_key_reason": analyst_response.get("key_reason", "N/A"),
-                "analyst_recommendation": analyst_response.get("analyst_recommendation", "EXIT"),
-                "risk_action": risk_response.get("action", "HOLD"),
-                "risk_reason": risk_response.get("reason", "N/A"),
-                "risk_urgency": risk_response.get("urgency", "MONITOR"),
-                "flag_human": risk_response.get("flag_human", True),
-            }
             raw_decision = self.call_llm(
-                "PROMPT_ORCHESTRATOR_POSITION_DECISION",
-                decision_context,
+                "PROMPT_POSITION_REVIEW_CONSOLIDATED",
+                context,
                 expect_json=False,
             )
 
-            # Parse JSON + Telegram (same pattern as optimizer synthesis)
+            # Parse JSON + Telegram (split on ---)
             final = {}
             telegram_text = ""
             if "---" in raw_decision:
@@ -729,15 +702,15 @@ class OrchestratorAgent(BaseAgent):
                     final = {"final_action": "HOLD"}
 
         except Exception as e:
-            self.logger.error("Orchestrator position decision failed: %s", e)
+            self.logger.error("Position review LLM failed: %s", e)
             final = {"final_action": "HOLD", "execute_immediately": False}
             telegram_text = ""
 
-        # Step 4 — Execute if needed
+        # Execute if needed
         if final.get("execute_immediately") and final.get("order_details"):
             self._execute_position_action(final["order_details"], position)
 
-        # Step 5 — Telegram (ALWAYS)
+        # Telegram (ALWAYS)
         if not telegram_text:
             entry_price = position.get("entry_price", 0)
             current_price = position.get("current_price", 0)

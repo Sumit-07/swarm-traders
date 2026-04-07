@@ -61,6 +61,7 @@ class TelegramBot:
                 "authenticate": self._cmd_authenticate,
                 "optimizer": self._cmd_optimizer,
                 "catchup": self._cmd_catchup,
+                "dryrun": self._cmd_dryrun,
                 "lt_scan": self._cmd_lt_scan,
             }
             for cmd_name, handler in commands.items():
@@ -287,6 +288,13 @@ class TelegramBot:
             "Signal loop will resume on next 5-min tick."
         )
 
+    async def _cmd_dryrun(self, update, context):
+        self._publish_command("DRY_RUN")
+        await update.message.reply_text(
+            "Dry run started: morning graph → signal loop → position monitor. "
+            "Will report results when complete."
+        )
+
     async def _cmd_lt_scan(self, update, context):
         self._publish_command("LT_SCAN")
         await update.message.reply_text(
@@ -303,6 +311,7 @@ class TelegramBot:
             await update.message.reply_text(
                 "Commands: /status /positions /halt /resume /pnl /strategy\n"
                 "/catchup — run full morning sequence manually\n"
+                "/dryrun — test full pipeline (morning → signals → monitor)\n"
                 "/authenticate — re-authenticate Kite\n"
                 "/lt_scan — run LT investment opportunity scan\n"
                 "Or reply YES/NO/EDIT to pending proposals."

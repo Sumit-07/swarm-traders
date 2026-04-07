@@ -337,6 +337,8 @@ class ExecutionAgent(BaseAgent):
             "stop_loss": order.get("stop_loss_price"),
             "target": order.get("target_price"),
             "bucket": order.get("bucket", "conservative"),
+            "strategy": order.get("strategy", ""),
+            "entry_fees": fill.get("brokerage", 20),
             "status": "OPEN",
             "entry_time": fill["filled_at"],
         })

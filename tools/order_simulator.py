@@ -249,6 +249,11 @@ class OrderSimulator:
         for order_id in list(self._open_positions.keys()):
             pos = self._open_positions[order_id]
             price = get_price_fn(pos["symbol"])
+            if not price or price <= 0:
+                logger.warning(
+                    f"No valid price for {pos['symbol']} — skipping force close"
+                )
+                continue
             txn_type = "SELL" if pos["direction"] == "LONG" else "BUY"
             fill = self.simulate_fill({
                 "symbol": pos["symbol"],

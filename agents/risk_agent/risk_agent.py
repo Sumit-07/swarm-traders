@@ -24,6 +24,7 @@ class RiskAgent(BaseAgent):
         self._cooldown_until: datetime | None = None
         self._todays_pnl: float = 0.0
         self._review_cache: dict = {}  # "symbol:direction" -> {"decision": ..., "ts": ...}
+        self._processed_proposals: set = set()  # dedup proposal_ids across paths
 
     def on_start(self):
         self.logger.info("Risk Agent ready — all proposals will be reviewed")
@@ -56,8 +57,10 @@ class RiskAgent(BaseAgent):
     def _update_review_cache(self, symbol: str, direction: str, decision: str):
         """Cache a review decision for 1 hour."""
         import time as _time
-        # Evict stale entries (> 1 hour old)
+        # Evict stale entries (> 1 hour old) and trim processed proposals
         now = _time.time()
+        if len(self._processed_proposals) > 100:
+            self._processed_proposals.clear()
         self._review_cache = {
             k: v for k, v in self._review_cache.items()
             if now - v["ts"] < 3600
@@ -74,6 +77,15 @@ class RiskAgent(BaseAgent):
         """
         self._refresh_todays_pnl()
         proposal = message.payload
+        proposal_id = proposal.get("proposal_id", "")
+
+        # Dedup: skip if already reviewed via graph run() path
+        if proposal_id and proposal_id in self._processed_proposals:
+            self.logger.info(f"Proposal {proposal_id} already reviewed — skipping message path")
+            return
+        if proposal_id:
+            self._processed_proposals.add(proposal_id)
+
         symbol = proposal.get("symbol", "")
         direction = proposal.get("direction", "LONG")
         entry_price = proposal.get("entry_price", 0)
@@ -327,7 +339,7 @@ class RiskAgent(BaseAgent):
             self.logger.error(f"Failed to refresh PnL: {e}")
 
     def run(self, state: dict) -> dict:
-        """LangGraph node: review pending signals through 5 risk checks."""
+        """LangGraph node: review pending signals through 5 risk checks + LLM."""
         self._refresh_todays_pnl()
         pending = state.get("pending_signals", [])
         approved = []
@@ -338,11 +350,64 @@ class RiskAgent(BaseAgent):
         for signal in pending:
             if not isinstance(signal, dict):
                 continue
+
+            symbol = signal.get("symbol", "")
+            direction = signal.get("direction", "LONG")
+            proposal_id = signal.get("proposal_id", "")
+
+            # Mark as processed so message path skips it
+            if proposal_id:
+                self._processed_proposals.add(proposal_id)
+
+            # Check cache — skip full review if recently reviewed
+            cached = self._check_review_cache(symbol, direction)
+            if cached and cached["decision"] == "REJECTED":
+                self.logger.info(f"CACHED REJECT {symbol} {direction} (graph)")
+                rejected.append({"decision": "REJECTED", "symbol": symbol,
+                                 "reason": "cached_rejection"})
+                continue
+
             decision_payload = self._review_proposal_data(signal)
+
+            # LLM review for approved trades (same as message path)
             if decision_payload["decision"] == "APPROVED":
+                bucket = signal.get("bucket", "conservative")
+                entry_price = signal.get("entry_price", 0)
+                stop_loss = signal.get("stop_loss", 0)
+                quantity = signal.get("quantity_suggested", 1)
+                if bucket == "risk":
+                    capital = CAPITAL["risk_bucket_monthly"]
+                else:
+                    capital = CAPITAL["conservative_bucket"]
+                risk_per_share = abs(entry_price - stop_loss)
+                capital_at_risk = risk_per_share * quantity
+                risk_pct = capital_at_risk / capital if capital > 0 else 1.0
+                max_daily_loss = capital * RISK_LIMITS["max_daily_loss_pct"]
+                remaining_budget = max_daily_loss - abs(min(self._todays_pnl, 0))
+
+                try:
+                    llm_review = self._llm_trade_review(
+                        signal, decision_payload.get("checks", {}),
+                        capital_at_risk, risk_pct, remaining_budget,
+                    )
+                except Exception as e:
+                    self.logger.error(f"Risk LLM review failed in graph: {e}")
+                    llm_review = {}
+
+                if llm_review.get("reason"):
+                    decision_payload["reason"] = llm_review["reason"]
+                if llm_review.get("approved_stop_loss"):
+                    decision_payload["approved_stop_loss"] = llm_review["approved_stop_loss"]
+                if llm_review.get("approved_target"):
+                    decision_payload["approved_target"] = llm_review["approved_target"]
+                flag_human = risk_pct > 0.015 or llm_review.get("flag_human", False)
+                decision_payload["flag_human"] = flag_human
                 approved.append(decision_payload)
             else:
                 rejected.append(decision_payload)
+
+            # Cache the decision
+            self._update_review_cache(symbol, direction, decision_payload["decision"])
 
         state["approved_orders"] = approved
         state["rejected_proposals"] = rejected

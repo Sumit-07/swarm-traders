@@ -81,6 +81,10 @@ def _make_risk_agent(positions=None):
     agent._in_cooldown = False
     agent._cooldown_until = None
     agent._todays_pnl = 0.0
+    agent._review_cache = {}
+    agent._processed_proposals = set()
+    agent._llm_provider = None
+    agent._extra_context = ""
     return agent
 
 

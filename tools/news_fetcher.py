@@ -7,6 +7,7 @@ gives us real-time headlines with zero extra API keys.
 
 import json
 import re
+import time as _time
 
 from config import GOOGLE_API_KEY
 from tools.logger import get_agent_logger
@@ -99,19 +100,33 @@ def fetch_market_news(current_time: str, current_date: str) -> dict:
             current_date=current_date,
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                temperature=0.2,
-            ),
-        )
+        # Retry with backoff for transient errors (503, 429, 500)
+        last_err = None
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        temperature=0.2,
+                    ),
+                )
+                raw_text = response.text
+                logger.info(f"News fetch complete — response length: {len(raw_text)}")
+                return _parse_news_response(raw_text)
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                if any(code in err_str for code in ("503", "429", "500", "UNAVAILABLE", "RESOURCE_EXHAUSTED")):
+                    wait = (attempt + 1) * 10  # 10s, 20s, 30s
+                    logger.warning(f"News fetch attempt {attempt + 1} failed (transient): {e}. Retrying in {wait}s...")
+                    _time.sleep(wait)
+                else:
+                    raise  # Non-transient error, don't retry
 
-        raw_text = response.text
-        logger.info(f"News fetch complete — response length: {len(raw_text)}")
-
-        return _parse_news_response(raw_text)
+        logger.error(f"News fetch failed after 3 attempts: {last_err}")
+        return _empty_result(str(last_err))
 
     except ImportError:
         logger.error("google-genai package not installed — pip install google-genai")

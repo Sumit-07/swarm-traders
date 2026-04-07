@@ -176,6 +176,84 @@ class SwarmScheduler:
                 "Catchup complete. Signal loop will run on next 5-min tick."
             )
 
+    def dry_run(self):
+        """Run the full pipeline once: morning → signal loop → position monitor.
+
+        Use after deployment to verify the complete flow works end-to-end.
+        Safe to run in PAPER mode — will generate real signals and paper trades
+        if entry conditions are met. Works post-market hours by bypassing
+        time guards (analyst intraday cutoff).
+        """
+        logger.info("DRY RUN — full pipeline test starting")
+
+        if self.telegram:
+            self.telegram.send_message(
+                "Dry run starting: morning graph → signal loop → position monitor"
+            )
+
+        # Bypass time guards on analyst so dry run works post-market
+        analyst = self.agents.get("analyst")
+        if analyst:
+            analyst._dry_run_mode = True
+
+        try:
+            self._dry_run_inner()
+        finally:
+            # Always restore normal mode
+            if analyst:
+                analyst._dry_run_mode = False
+
+    def _dry_run_inner(self):
+        """Internal dry run logic — separated so _dry_run_mode cleanup is guaranteed."""
+        strategy = {}
+
+        # Step 1: Morning sequence (auth + strategy selection)
+        try:
+            self._system_startup()
+            self._run_morning_graph()
+            strategy = self._initial_state.get("conservative_strategy", {})
+            logger.info(f"DRY RUN morning complete — strategy: {strategy.get('strategy', 'NONE')}")
+        except Exception as e:
+            logger.error(f"DRY RUN morning failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"Dry run FAILED at morning graph: {e}")
+            return
+
+        # Step 2: One signal loop tick
+        try:
+            self._run_signal_loop()
+            logger.info("DRY RUN signal loop complete")
+        except Exception as e:
+            logger.error(f"DRY RUN signal loop failed: {e}")
+            if self.telegram:
+                self.telegram.send_message(f"Dry run FAILED at signal loop: {e}")
+            return
+
+        # Step 3: Position monitor check
+        try:
+            self._run_position_monitor()
+            logger.info("DRY RUN position monitor complete")
+        except Exception as e:
+            logger.error(f"DRY RUN position monitor failed: {e}")
+
+        # Summary
+        orchestrator = self.agents.get("orchestrator")
+        positions = {}
+        if orchestrator:
+            positions = orchestrator.redis.get_state("state:positions") or {}
+        open_count = len([p for p in positions.get("positions", [])
+                          if p.get("status") == "OPEN"])
+
+        summary = (
+            f"Dry run complete.\n"
+            f"Strategy: {strategy.get('strategy', 'NONE')}\n"
+            f"Open positions: {open_count}\n"
+            f"Mode: PAPER"
+        )
+        logger.info(f"DRY RUN complete — {open_count} open positions")
+        if self.telegram:
+            self.telegram.send_message(summary)
+
     # --- Helper ---
 
     def _add_job(self, job_id: str, func, time_str: str, args=None):

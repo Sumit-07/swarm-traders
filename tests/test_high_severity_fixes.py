@@ -210,6 +210,10 @@ class TestRiskAgentPnlRefresh:
         agent._in_cooldown = False
         agent._cooldown_until = None
         agent._todays_pnl = 0.0
+        agent._review_cache = {}
+        agent._processed_proposals = set()
+        agent._llm_provider = None
+        agent._extra_context = ""
         return agent
 
     def test_run_refreshes_pnl_from_sqlite(self):
