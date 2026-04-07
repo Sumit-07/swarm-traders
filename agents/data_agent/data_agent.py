@@ -149,9 +149,24 @@ class DataAgent(BaseAgent):
                 correlation_id=message.message_id,
             )
 
-    def pull_news(self):
-        """Fetch market news via Gemini search grounding and store in Redis."""
+    def pull_news(self, force: bool = False):
+        """Fetch market news via Gemini search grounding and store in Redis.
+
+        Skips if last fetch was < 55 minutes ago (unless force=True).
+        """
         now = datetime.now(IST)
+
+        if not force:
+            existing = self.redis.get_market_data("data:news_summary")
+            if existing and existing.get("fetched_at"):
+                try:
+                    last = datetime.fromisoformat(existing["fetched_at"])
+                    minutes_ago = (now - last).total_seconds() / 60
+                    if minutes_ago < 55:
+                        return
+                except (ValueError, TypeError):
+                    pass
+
         result = fetch_market_news(
             current_time=now.strftime("%H:%M"),
             current_date=now.strftime("%Y-%m-%d"),
