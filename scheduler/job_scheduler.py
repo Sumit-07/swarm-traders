@@ -403,15 +403,22 @@ class SwarmScheduler:
         from tools.position_monitor import PositionMonitor
         from tools.market_data import get_live_quote
 
+        redis = orchestrator.redis
         broker = getattr(orchestrator, "broker", None)
         tool = PositionMonitor(
-            redis_store=orchestrator.redis,
+            redis_store=redis,
             sqlite_store=orchestrator.sqlite,
             broker=broker,
             simulator=simulator,
         )
 
         def get_price_fn(symbol: str) -> float:
+            # Try Redis tick data first (already refreshed by data agent)
+            tick = redis.get_market_data(f"data:watchlist_ticks:{symbol}")
+            if tick and tick.get("close"):
+                return float(tick["close"])
+
+            # Fallback to live quote
             try:
                 quotes = get_live_quote([symbol])
                 return quotes.get(symbol, {}).get("ltp", 0)
@@ -443,18 +450,22 @@ class SwarmScheduler:
         from tools.position_monitor import PositionMonitor
         from tools.market_data import get_live_quote
 
+        redis = orchestrator.redis
         broker = getattr(orchestrator, "broker", None)
         simulator = getattr(execution, "simulator", None) if execution else None
 
         monitor = PositionMonitor(
-            redis_store=orchestrator.redis,
+            redis_store=redis,
             sqlite_store=orchestrator.sqlite,
             broker=broker,
             simulator=simulator,
         )
 
         def get_price_fn(symbol: str) -> float:
-            """Fetch LTP for a symbol using market data provider."""
+            """Fetch LTP — Redis tick data first, then live quote fallback."""
+            tick = redis.get_market_data(f"data:watchlist_ticks:{symbol}")
+            if tick and tick.get("close"):
+                return float(tick["close"])
             try:
                 quotes = get_live_quote([symbol])
                 return quotes.get(symbol, {}).get("ltp", 0)
