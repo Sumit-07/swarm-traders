@@ -347,6 +347,7 @@ class SwarmScheduler:
             strategist.on_message(AgentMessage(
                 from_agent="orchestrator",
                 to_agent="strategist",
+                channel="channel:strategist",
                 type=MessageType.COMMAND,
                 payload={"command": "REEVAL_STRATEGY"},
                 priority=Priority.NORMAL,
@@ -493,15 +494,15 @@ class SwarmScheduler:
         """15:45 — Strategist reviews today's performance."""
         strategist = self.agents.get("strategist")
         if strategist:
-            from agents.message import MessageType
-            strategist.on_message(
-                type("FakeMsg", (), {
-                    "type": MessageType.COMMAND,
-                    "payload": {"command": "REVIEW_STRATEGY"},
-                    "from_agent": "scheduler",
-                    "priority": "NORMAL",
-                })()
-            )
+            from agents.message import AgentMessage, MessageType, Priority
+            strategist.on_message(AgentMessage(
+                from_agent="orchestrator",
+                to_agent="strategist",
+                channel="channel:strategist",
+                type=MessageType.COMMAND,
+                payload={"command": "REVIEW_STRATEGY"},
+                priority=Priority.NORMAL,
+            ))
 
     def _run_optimizer_meeting(self):
         """15:50 — Run post-market Optimizer meeting."""

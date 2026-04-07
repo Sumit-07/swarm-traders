@@ -105,7 +105,6 @@ def fetch_market_news(current_time: str, current_date: str) -> dict:
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
                 temperature=0.2,
-                max_output_tokens=2048,
             ),
         )
 
@@ -130,25 +129,84 @@ def _parse_news_response(text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Try extracting from code fences
-    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
-    if fence_match:
+    # Strip markdown code fences if present
+    stripped = re.sub(r"^```(?:json)?\s*", "", text.strip())
+    stripped = re.sub(r"\s*```\s*$", "", stripped)
+    if stripped != text.strip():
         try:
-            return json.loads(fence_match.group(1))
+            return json.loads(stripped)
         except json.JSONDecodeError:
             pass
 
     # Try finding first { ... } block
-    brace_match = re.search(r"\{[\s\S]*\}", text)
+    brace_match = re.search(r"\{[\s\S]*\}", stripped)
     if brace_match:
         try:
             return json.loads(brace_match.group(0))
         except json.JSONDecodeError:
             pass
 
-    logger.warning(f"Failed to parse news JSON: {text[:200]}")
+    # Truncated JSON — try to salvage what we can
+    brace_match = re.search(r"\{[\s\S]*", stripped)
+    if brace_match:
+        partial = brace_match.group(0)
+        result = _salvage_truncated_json(partial)
+        if result:
+            logger.warning("News JSON was truncated — salvaged partial result")
+            return result
+
+    logger.warning(f"Failed to parse news JSON: {text[:300]}")
     return {"_raw": text, "_parse_error": True,
             "overall_sentiment": "UNKNOWN", "headlines": []}
+
+
+def _salvage_truncated_json(partial: str) -> dict | None:
+    """Try to extract useful fields from truncated JSON.
+
+    When Gemini's response is cut off, we may still have complete
+    headlines and global_cues even if the rest is missing.
+    """
+    result = {}
+
+    # Try to extract headlines array
+    headlines_match = re.search(
+        r'"headlines"\s*:\s*\[([\s\S]*?)\]', partial
+    )
+    if headlines_match:
+        try:
+            result["headlines"] = json.loads("[" + headlines_match.group(1) + "]")
+        except json.JSONDecodeError:
+            # Try salvaging individual headline objects
+            items = re.findall(r'\{[^{}]+\}', headlines_match.group(1))
+            headlines = []
+            for item in items:
+                try:
+                    headlines.append(json.loads(item))
+                except json.JSONDecodeError:
+                    continue
+            if headlines:
+                result["headlines"] = headlines
+
+    # Try to extract other top-level fields
+    for field in ("overall_sentiment", "one_line_summary", "fii_dii_flow", "india_vix"):
+        match = re.search(rf'"{field}"\s*:\s*"([^"]*)"', partial)
+        if match:
+            result[field] = match.group(1)
+
+    # Try to extract global_cues object
+    cues_match = re.search(r'"global_cues"\s*:\s*\{([^{}]*)\}', partial)
+    if cues_match:
+        try:
+            result["global_cues"] = json.loads("{" + cues_match.group(1) + "}")
+        except json.JSONDecodeError:
+            pass
+
+    if result:
+        result.setdefault("headlines", [])
+        result.setdefault("overall_sentiment", "UNKNOWN")
+        return result
+
+    return None
 
 
 def _empty_result(reason: str) -> dict:
